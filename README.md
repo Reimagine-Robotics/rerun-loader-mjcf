@@ -3,6 +3,10 @@
 
 A [Rerun](https://rerun.io/) external data loader for MJCF (MuJoCo XML) files.
 
+https://github.com/user-attachments/assets/36aab5aa-134f-49a3-92d4-efb6b61e9354
+
+*Loading all robots from [mujoco_menagerie](https://github.com/google-deepmind/mujoco_menagerie)*
+
 ## Installation
 
 ```bash
