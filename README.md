@@ -1,4 +1,5 @@
 # rerun-loader-mjcf
+[![CI](https://github.com/Reimagine-Robotics/rerun-loader-mjcf/actions/workflows/ci.yml/badge.svg)](https://github.com/Reimagine-Robotics/rerun-loader-mjcf/actions/workflows/ci.yml)
 
 A [Rerun](https://rerun.io/) external data loader for MJCF (MuJoCo XML) files.
 
@@ -14,6 +15,12 @@ pip install rerun-loader-mjcf
 
 ```bash
 rerun-loader-mjcf robot.xml
+```
+
+Or run directly without installing:
+
+```bash
+uvx rerun-loader-mjcf robot.xml
 ```
 
 ### Python API
