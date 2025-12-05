@@ -1,0 +1,12 @@
+target-version = "py312"
+
+[lint]
+extend-select = [
+  # Ruff-specific rules
+  "RUF",
+]
+# line-length = 88
+ignore = ["E501"]
+
+[lint.pydocstyle]
+convention = "google"
