@@ -1,0 +1,36 @@
+[project]
+name            = "rerun-loader-mjcf"
+version         = "0.1.0"
+description     = "A Rerun data loader for MJCF (MuJoCo XML) files"
+readme          = "README.md"
+requires-python = ">=3.10"
+
+authors = [{ name = "Jafar Uruc", email = "jafar@reimaginerobotics.ai" }]
+license = { file = "LICENSE" }
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = ["mujoco>=3.3.0", "numpy>=2", "rerun-sdk>=0.27.2"]
+
+[project.urls]
+Homepage   = "https://github.com/reimagine-Robotics/rerun-loader-mjcf"
+Repository = "https://github.com/reimagine-Robotics/rerun-loader-mjcf"
+Issues     = "https://github.com/reimagine-Robotics/rerun-loader-mjcf/issues"
+
+[dependency-groups]
+dev = ["pre-commit>=4.2.0", "pytest>=8.4.1"]
+
+[project.scripts]
+rerun-loader-mjcf = "rerun_loader_mjcf:main"
+
+[build-system]
+requires      = ["uv_build>=0.8.14,<0.9.0"]
+build-backend = "uv_build"

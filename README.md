@@ -1,0 +1,54 @@
+# rerun-loader-mjcf
+
+A [Rerun](https://rerun.io/) external data loader for MJCF (MuJoCo XML) files.
+
+## Installation
+
+```bash
+pip install rerun-loader-mjcf
+```
+
+## Usage
+
+### CLI
+
+```bash
+rerun-loader-mjcf robot.xml
+```
+
+### Python API
+
+```python
+import mujoco
+import rerun as rr
+import rerun_loader_mjcf
+
+model = mujoco.MjModel.from_xml_path("robot.xml")
+data = mujoco.MjData(model)
+
+rr.init("mjcf_viewer", spawn=True)
+logger = rerun_loader_mjcf.MJCFLogger(model)
+
+rr.set_time("frame", sequence=0)
+logger.log_model()
+
+data.qpos[0] += 0.5
+mujoco.mj_forward(model, data)
+
+rr.set_time("frame", sequence=1)
+logger.log_data(data)
+```
+
+## Lint
+
+```bash
+uv run pre-commit run -a
+```
+
+## Credits
+
+Inspired by [rerun-loader-python-example-urdf](https://github.com/rerun-io/rerun-loader-python-example-urdf).
+
+## What's Next
+
+- Integrate [mujoco-rs](https://github.com/jafarAbdi/mujoco-rs) to implement a native Rust loader similar to [loader_urdf.rs](https://github.com/rerun-io/rerun/blob/main/crates/store/re_data_loader/src/loader_urdf.rs)
