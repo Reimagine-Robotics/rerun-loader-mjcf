@@ -9,7 +9,6 @@ import rerun as rr
 
 # MuJoCo uses -1 to indicate "no reference" for IDs (material, texture, mesh, etc.)
 _MJCF_NO_ID = -1
-_PLANE_SIZE = 5.0
 
 
 class MJCFLogger:
@@ -144,28 +143,67 @@ class MJCFLogger:
         tex_id: int,
         recording: rr.RecordingStream,
     ) -> None:
-        """Log a plane geom (requires texture)."""
+        """Log a plane geom as a textured quad.
+
+        MuJoCo plane geometry:
+        - size[0], size[1]: half-extents for rendering (0 means use model extent)
+        - size[2]: grid spacing (unused here)
+
+        MuJoCo texture tiling (controlled by material attributes):
+        - texrepeat: number of texture repeats
+        - texuniform: if True, texrepeat is per spatial unit; if False, across whole plane
+
+        MuJoCo's builtin checker texture contains a 2x2 grid of squares per UV tile,
+        so we divide the repeat count by 2 to match the visual tile size.
+
+        UV coordinates are centered around origin with a 0.5 offset so that the
+        world origin (0,0) sits at the center of four tiles, matching MuJoCo's rendering.
+        """
         if tex_id == _MJCF_NO_ID:
             print(f"Warning: Skipping plane geom '{geom.name}' without texture.")
             return
 
+        # Plane half-extents: use explicit size or fall back to 3x model extent
+        extent = 3.0 * max(self.model.stat.extent, 1.0)
+        plane_half_x = geom.size[0] if geom.size[0] > 0 else extent
+        plane_half_y = geom.size[1] if geom.size[1] > 0 else extent
+
         texrepeat = self.model.mat_texrepeat[mat_id]
+        texuniform = self.model.mat_texuniform[mat_id]
+
+        # Calculate UV repeats across the plane
+        # Divide by 2 because MuJoCo's checker texture has 2x2 squares per UV tile
+        plane_size_x = 2 * plane_half_x
+        plane_size_y = 2 * plane_half_y
+        if texuniform:
+            num_repeats_x = (texrepeat[0] * plane_size_x) / 2
+            num_repeats_y = (texrepeat[1] * plane_size_y) / 2
+        else:
+            num_repeats_x = texrepeat[0] / 2
+            num_repeats_y = texrepeat[1] / 2
+
+        uv_half_x = num_repeats_x / 2
+        uv_half_y = num_repeats_y / 2
+
+        # Offset UVs by 0.5 so the origin is centered between four tiles
+        uv_offset = 0.5
+
         vertices = np.array(
             [
-                [-_PLANE_SIZE, -_PLANE_SIZE, 0],
-                [_PLANE_SIZE, -_PLANE_SIZE, 0],
-                [_PLANE_SIZE, _PLANE_SIZE, 0],
-                [-_PLANE_SIZE, _PLANE_SIZE, 0],
+                [-plane_half_x, -plane_half_y, 0],
+                [plane_half_x, -plane_half_y, 0],
+                [plane_half_x, plane_half_y, 0],
+                [-plane_half_x, plane_half_y, 0],
             ],
             dtype=np.float32,
         )
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
         uvs = np.array(
             [
-                [0, 0],
-                [texrepeat[0], 0],
-                [texrepeat[0], texrepeat[1]],
-                [0, texrepeat[1]],
+                [-uv_half_x + uv_offset, -uv_half_y + uv_offset],
+                [uv_half_x + uv_offset, -uv_half_y + uv_offset],
+                [uv_half_x + uv_offset, uv_half_y + uv_offset],
+                [-uv_half_x + uv_offset, uv_half_y + uv_offset],
             ],
             dtype=np.float32,
         )
