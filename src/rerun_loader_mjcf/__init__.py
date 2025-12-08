@@ -395,6 +395,7 @@ class MJCFLogger:
         self,
         model_or_path: str | pathlib.Path | mujoco.MjModel,
         entity_path_prefix: str = "",
+        opacity: float | None = None,
     ) -> None:
         self.model: mujoco.MjModel = (
             model_or_path
@@ -402,6 +403,7 @@ class MJCFLogger:
             else mujoco.MjModel.from_xml_path(str(model_or_path))
         )
         self.entity_path_prefix = entity_path_prefix
+        self.opacity = opacity
         self._body_paths: list[str] = []
 
     def _add_entity_path_prefix(self, entity_path: str) -> str:
@@ -409,6 +411,12 @@ class MJCFLogger:
         if self.entity_path_prefix:
             return f"{self.entity_path_prefix}/{entity_path}"
         return entity_path
+
+    def _get_albedo_factor(self) -> list[float] | None:
+        """Get albedo factor for transparency if opacity is set."""
+        if self.opacity is None:
+            return None
+        return [1.0, 1.0, 1.0, self.opacity]
 
     def _is_visual_geom(self, geom: mujoco.MjsGeom) -> bool:
         """Check if geom is a visual-only geom (not for collision).
@@ -544,6 +552,7 @@ class MJCFLogger:
                 triangle_indices=faces,
                 albedo_texture=self._get_texture(tex_id),
                 vertex_texcoords=uvs,
+                albedo_factor=self._get_albedo_factor(),
             ),
             static=True,
             recording=recording,
@@ -570,6 +579,7 @@ class MJCFLogger:
                     vertex_normals=normals,
                     albedo_texture=self._get_texture(tex_id),
                     vertex_texcoords=texcoords,
+                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
                 recording=recording,
@@ -583,6 +593,7 @@ class MJCFLogger:
                     triangle_indices=faces,
                     vertex_normals=normals,
                     vertex_colors=vertex_colors,
+                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
                 recording=recording,
@@ -660,6 +671,7 @@ class MJCFLogger:
                         triangle_indices=faces,
                         vertex_normals=normals,
                         vertex_colors=vertex_colors,
+                        albedo_factor=self._get_albedo_factor(),
                     ),
                     static=True,
                     recording=recording,
