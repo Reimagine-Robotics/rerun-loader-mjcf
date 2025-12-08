@@ -21,6 +21,12 @@ pip install rerun-loader-mjcf
 rerun-loader-mjcf robot.xml
 ```
 
+To run a real-time simulation loop:
+
+```bash
+rerun-loader-mjcf robot.xml --simulate
+```
+
 Or run directly without installing:
 
 ```bash

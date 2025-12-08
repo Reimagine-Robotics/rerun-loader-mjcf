@@ -457,6 +457,9 @@ def main() -> None:
     parser.add_argument(
         "--recording-id", type=str, help="optional recommended ID for the recording"
     )
+    parser.add_argument(
+        "--simulate", action="store_true", help="run real-time simulation loop"
+    )
     args = parser.parse_args()
 
     filepath = pathlib.Path(args.filepath)
@@ -469,11 +472,13 @@ def main() -> None:
     rr.init(app_id, recording_id=args.recording_id, spawn=True)
 
     model = mujoco.MjModel.from_xml_path(str(filepath))
-    data = mujoco.MjData(model)
-
     mjcf_logger = MJCFLogger(model)
     mjcf_logger.log_model()
 
+    if not args.simulate:
+        return
+
+    data = mujoco.MjData(model)
     log_interval = 1.0 / 30.0
     last_log_time = 0.0
 
