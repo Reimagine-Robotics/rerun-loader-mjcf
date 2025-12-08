@@ -9,6 +9,8 @@ import rerun as rr
 
 # MuJoCo uses -1 to indicate "no reference" for IDs (material, texture, mesh, etc.)
 _MJCF_NO_ID = -1
+# Multiplier for plane extent when size is not specified (affects number of tiles)
+_PLANE_EXTENT_MULTIPLIER = 1.0
 
 
 class MJCFLogger:
@@ -163,8 +165,8 @@ class MJCFLogger:
             print(f"Warning: Skipping plane geom '{geom.name}' without texture.")
             return
 
-        # Plane half-extents: use explicit size or fall back to 3x model extent
-        extent = 3.0 * max(self.model.stat.extent, 1.0)
+        # Plane half-extents: use explicit size or fall back to model extent
+        extent = _PLANE_EXTENT_MULTIPLIER * max(self.model.stat.extent, 1.0)
         plane_half_x = geom.size[0] if geom.size[0] > 0 else extent
         plane_half_y = geom.size[1] if geom.size[1] > 0 else extent
 
