@@ -441,6 +441,7 @@ def quat_wxyz_to_xyzw(quat: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
 
 def main() -> None:
     import argparse
+    import time
 
     parser = argparse.ArgumentParser(
         description="""
@@ -465,8 +466,29 @@ def main() -> None:
 
     rr.init(app_id, recording_id=args.recording_id, spawn=True)
 
-    mjcf_logger = MJCFLogger(filepath)
+    model = mujoco.MjModel.from_xml_path(str(filepath))
+    data = mujoco.MjData(model)
+
+    mjcf_logger = MJCFLogger(model)
     mjcf_logger.log_model()
+
+    log_interval = 1.0 / 30.0
+    last_log_time = 0.0
+
+    while True:
+        step_start = time.time()
+
+        mujoco.mj_step(model, data)
+
+        if data.time - last_log_time >= log_interval:
+            rr.set_time_seconds("sim_time", data.time)
+            mjcf_logger.log_data(data)
+            last_log_time = data.time
+
+        elapsed = time.time() - step_start
+        sleep_time = model.opt.timestep - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
 
 if __name__ == "__main__":
