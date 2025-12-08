@@ -282,6 +282,8 @@ class MJCFLogger:
         """Log primitive geometry using Rerun's native primitives."""
         geom_type = geom.type.item()
         color = (rgba * 255).astype(np.uint8)
+        if self.opacity is not None:
+            color[3] = int(self.opacity * 255)
 
         match geom_type:
             case mujoco.mjtGeom.mjGEOM_SPHERE:
