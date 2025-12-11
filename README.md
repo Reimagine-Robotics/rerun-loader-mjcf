@@ -3,6 +3,14 @@
 
 A [Rerun](https://rerun.io/) external data loader for MJCF (MuJoCo XML) files.
 
+https://github.com/user-attachments/assets/a9f95ed6-1441-4ce0-bef8-c3fb1e720d56
+
+*Simulating `fourier_n1` and `boston_dynamics_spot` from [mujoco_menagerie](https://github.com/google-deepmind/mujoco_menagerie):*
+```bash
+uv run rerun-loader-mjcf --simulate mujoco_menagerie/fourier_n1/scene.xml
+uv run rerun-loader-mjcf --simulate mujoco_menagerie/boston_dynamics_spot/scene.xml
+```
+
 https://github.com/user-attachments/assets/36aab5aa-134f-49a3-92d4-efb6b61e9354
 
 *Loading all robots from [mujoco_menagerie](https://github.com/google-deepmind/mujoco_menagerie)*
