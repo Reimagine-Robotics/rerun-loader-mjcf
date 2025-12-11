@@ -29,7 +29,7 @@ class MJCFLogger:
         )
         self.entity_path_prefix = entity_path_prefix
         self.opacity = opacity
-        self._body_paths: list[str] = []
+        self.body_paths: list[str] = []
 
     def _add_entity_path_prefix(self, entity_path: str) -> str:
         """Add prefix (if passed) to entity path."""
@@ -59,14 +59,14 @@ class MJCFLogger:
 
         Creates MjData internally to compute forward kinematics and set initial transforms.
         """
-        self._body_paths = []
+        self.body_paths = []
 
         # First pass: collect body paths
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = body.name if body.name else "world"
             body_path = self._add_entity_path_prefix(body_name)
-            self._body_paths.append(body_path)
+            self.body_paths.append(body_path)
 
         # Group geoms by body and separate visual from collision
         body_geoms: dict[int, list] = {i: [] for i in range(self.model.nbody)}
@@ -104,8 +104,8 @@ class MJCFLogger:
             body = self.model.body(body_id)
             body_name = body.name if body.name else "world"
             body_path = (
-                self._body_paths[body_id]
-                if body_id < len(self._body_paths)
+                self.body_paths[body_id]
+                if body_id < len(self.body_paths)
                 else self._add_entity_path_prefix(body_name)
             )
 
@@ -434,6 +434,104 @@ class MJCFLogger:
     def _get_texture(self, tex_id: int) -> npt.NDArray[np.uint8]:
         """Extract texture data from MjModel."""
         return self.model.tex(tex_id).data
+
+
+class MJCFRecorder:
+    """Context manager for efficient batched recording of MuJoCo simulations.
+
+    Uses Rerun's columnar API for better performance with time-series data.
+
+    Example:
+        logger = MJCFLogger(model)
+        logger.log_model()
+
+        with MJCFRecorder(logger) as recorder:
+            for _ in range(1000):
+                mujoco.mj_step(model, data)
+                recorder.record(data)
+        # auto-flushes on exit
+    """
+
+    def __init__(
+        self,
+        logger: MJCFLogger,
+        timeline_name: str = "sim_time",
+        recording: rr.RecordingStream | None = None,
+    ) -> None:
+        """Initialize the recorder.
+
+        Args:
+            logger: MJCFLogger instance (must have log_model() called first)
+            timeline_name: Name of the timeline in Rerun.
+            recording: Optional Rerun recording stream.
+        """
+        self.logger = logger
+        self.timeline_name = timeline_name
+        self.recording = recording
+        self.times: list[float] = []
+        self.positions: list[npt.NDArray[np.float64]] = []
+        self.quaternions: list[npt.NDArray[np.float64]] = []
+
+    def __enter__(self) -> MJCFRecorder:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        self.flush()
+        return False
+
+    def record(self, data: mujoco.MjData, *, log_time: bool = True) -> None:
+        """Record simulation state for later batched logging.
+
+        Args:
+            data: MuJoCo simulation data.
+            log_time: If True, log data.time as a time index.
+        """
+        if log_time:
+            self.times.append(data.time)
+        self.positions.append(data.xpos.copy())
+        self.quaternions.append(data.xquat.copy())
+
+    def flush(self) -> None:
+        """Send accumulated data using columnar API."""
+        if not self.positions:
+            return
+
+        positions = np.array(self.positions)
+        quaternions = np.array(self.quaternions)
+        num_frames = len(positions)
+        if self.times:
+            indexes = [rr.TimeColumn(self.timeline_name, duration=np.array(self.times))]
+        else:
+            indexes = [
+                rr.TimeColumn(self.timeline_name, sequence=np.arange(num_frames))
+            ]
+
+        for body_id in range(self.logger.model.nbody):
+            body_path = self.logger.body_paths[body_id]
+
+            # Convert wxyz (MuJoCo) to xyzw (Rerun) for all timesteps
+            quats_xyzw = np.column_stack(
+                [
+                    quaternions[:, body_id, 1],
+                    quaternions[:, body_id, 2],
+                    quaternions[:, body_id, 3],
+                    quaternions[:, body_id, 0],
+                ]
+            )
+
+            rr.send_columns(
+                body_path,
+                indexes=indexes,
+                columns=rr.Transform3D.columns(
+                    translation=positions[:, body_id],
+                    quaternion=quats_xyzw,
+                ),
+                recording=self.recording,
+            )
+
+        self.times.clear()
+        self.positions.clear()
+        self.quaternions.clear()
 
 
 def quat_wxyz_to_xyzw(quat: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:

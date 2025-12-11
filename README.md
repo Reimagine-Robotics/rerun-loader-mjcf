@@ -64,6 +64,36 @@ rr.set_time("frame", sequence=1)
 logger.log_data(data)
 ```
 
+### Recording Simulations
+
+For efficient batch recording of simulations, use `MJCFRecorder`:
+
+```python
+import mujoco
+import rerun as rr
+import rerun_loader_mjcf
+
+model = mujoco.MjModel.from_xml_path("robot.xml")
+data = mujoco.MjData(model)
+
+rr.init("simulation", spawn=True)
+
+logger = rerun_loader_mjcf.MJCFLogger(model)
+logger.log_model()
+
+# With simulation time
+with rerun_loader_mjcf.MJCFRecorder(logger) as recorder:
+    while data.time < 5.0:
+        mujoco.mj_step(model, data)
+        recorder.record(data)
+
+# Without time (uses frame sequence instead)
+with rerun_loader_mjcf.MJCFRecorder(logger, timeline_name="frame") as recorder:
+    for _ in range(1000):
+        mujoco.mj_step(model, data)
+        recorder.record(data, log_time=False)
+```
+
 ## Lint
 
 ```bash
