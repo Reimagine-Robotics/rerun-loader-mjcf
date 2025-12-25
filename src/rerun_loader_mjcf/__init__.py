@@ -468,9 +468,11 @@ class MJCFRecorder:
         self.logger = logger
         self.timeline_name = timeline_name
         self.recording = recording
-        self.times: list[float] = []
-        self.positions: list[npt.NDArray[np.float64]] = []
-        self.quaternions: list[npt.NDArray[np.float64]] = []
+        self._sequences: list[int] = []
+        self._durations: list[float] = []
+        self._timestamps: list[float] = []
+        self._positions: list[npt.NDArray[np.float64]] = []
+        self._quaternions: list[npt.NDArray[np.float64]] = []
 
     def __enter__(self) -> MJCFRecorder:
         return self
@@ -479,32 +481,51 @@ class MJCFRecorder:
         self.flush()
         return False
 
-    def record(self, data: mujoco.MjData, *, log_time: bool = True) -> None:
+    def record(
+        self,
+        data: mujoco.MjData,
+        *,
+        sequence: int | None = None,
+        duration: float | None = None,
+        timestamp: float | None = None,
+    ) -> None:
         """Record simulation state for later batched logging.
 
         Args:
             data: MuJoCo simulation data.
-            log_time: If True, log data.time as a time index.
+            sequence: Sequence index (mutually exclusive with duration/timestamp).
+            duration: Duration in seconds (mutually exclusive with sequence/timestamp).
+            timestamp: Timestamp in seconds (mutually exclusive with sequence/duration).
+
+        If none specified, defaults to duration=data.time.
         """
-        if log_time:
-            self.times.append(data.time)
-        self.positions.append(data.xpos.copy())
-        self.quaternions.append(data.xquat.copy())
+        if sequence is not None:
+            self._sequences.append(sequence)
+        elif duration is not None:
+            self._durations.append(duration)
+        elif timestamp is not None:
+            self._timestamps.append(timestamp)
+        else:
+            self._durations.append(data.time)
+        self._positions.append(data.xpos.copy())
+        self._quaternions.append(data.xquat.copy())
 
     def flush(self) -> None:
         """Send accumulated data using columnar API."""
-        if not self.positions:
+        if not self._positions:
             return
 
-        positions = np.array(self.positions)
-        quaternions = np.array(self.quaternions)
-        num_frames = len(positions)
-        if self.times:
-            indexes = [rr.TimeColumn(self.timeline_name, duration=np.array(self.times))]
+        positions = np.array(self._positions)
+        quaternions = np.array(self._quaternions)
+
+        if self._sequences:
+            indexes = [rr.TimeColumn(self.timeline_name, sequence=self._sequences)]
+        elif self._durations:
+            indexes = [rr.TimeColumn(self.timeline_name, duration=self._durations)]
+        elif self._timestamps:
+            indexes = [rr.TimeColumn(self.timeline_name, timestamp=self._timestamps)]
         else:
-            indexes = [
-                rr.TimeColumn(self.timeline_name, sequence=np.arange(num_frames))
-            ]
+            raise RuntimeError("No timeline data recorded")
 
         for body_id in range(self.logger.model.nbody):
             body_path = self.logger.body_paths[body_id]
@@ -529,9 +550,11 @@ class MJCFRecorder:
                 recording=self.recording,
             )
 
-        self.times.clear()
-        self.positions.clear()
-        self.quaternions.clear()
+        self._sequences.clear()
+        self._durations.clear()
+        self._timestamps.clear()
+        self._positions.clear()
+        self._quaternions.clear()
 
 
 def quat_wxyz_to_xyzw(quat: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
