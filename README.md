@@ -81,17 +81,23 @@ rr.init("simulation", spawn=True)
 logger = rerun_loader_mjcf.MJCFLogger(model)
 logger.log_model()
 
-# With simulation time
+# With simulation time (default: uses duration=data.time)
 with rerun_loader_mjcf.MJCFRecorder(logger) as recorder:
     while data.time < 5.0:
         mujoco.mj_step(model, data)
         recorder.record(data)
 
-# Without time (uses frame sequence instead)
+# With explicit sequence index
 with rerun_loader_mjcf.MJCFRecorder(logger, timeline_name="frame") as recorder:
-    for _ in range(1000):
+    for i in range(1000):
         mujoco.mj_step(model, data)
-        recorder.record(data, log_time=False)
+        recorder.record(data, sequence=i)
+
+# With explicit timestamp
+with rerun_loader_mjcf.MJCFRecorder(logger, timeline_name="sim_time") as recorder:
+    while data.time < 5.0:
+        mujoco.mj_step(model, data)
+        recorder.record(data, timestamp=data.time)
 ```
 
 ## Lint
