@@ -2,16 +2,33 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
+from typing import TYPE_CHECKING
 
 import mujoco
 import numpy as np
-import numpy.typing as npt
 import rerun as rr
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 # MuJoCo uses -1 to indicate "no reference" for IDs (material, texture, mesh, etc.)
 _MJCF_NO_ID = -1
 # Multiplier for plane extent when size is not specified (affects number of tiles)
 _PLANE_EXTENT_MULTIPLIER = 1.0
+# Default body name for unnamed bodies (body ID 0)
+_WORLD_BODY_NAME = "world"
+# MuJoCo collision class convention (Menagerie style)
+_VISUAL_CONTYPE = 0
+_VISUAL_CONAFFINITY = 0
+_COLLISION_GROUP = 3
+# MuJoCo's checker texture has 2x2 squares per UV tile
+_CHECKER_TILES_PER_UV = 2
+# UV offset to center origin between four tiles
+_UV_CENTER_OFFSET = 0.5
+# RGBA color range
+_RGBA_MAX = 255
+# Default simulation logging rate
+_LOG_FPS = 30.0
 
 
 @dataclasses.dataclass
@@ -78,9 +95,10 @@ class MJCFLogger:
         - "visual" class: contype="0" conaffinity="0" group="2" (rendering only, no collision)
         - "collision" class: group="3" (physics simulation, collision enabled by default)
         """
-        return (geom.contype.item() == 0 and geom.conaffinity.item() == 0) and (
-            geom.group.item() != 3
-        )
+        return (
+            geom.contype.item() == _VISUAL_CONTYPE
+            and geom.conaffinity.item() == _VISUAL_CONAFFINITY
+        ) and (geom.group.item() != _COLLISION_GROUP)
 
     def log_model(self, recording: rr.RecordingStream | None = None) -> None:
         """Log MJCF model geometry to Rerun.
@@ -92,7 +110,7 @@ class MJCFLogger:
         # First pass: collect body paths
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
-            body_name = body.name if body.name else "world"
+            body_name = body.name if body.name else _WORLD_BODY_NAME
             self.body_paths.append(self.paths.body_path(body_name))
 
         # Group geoms by body and classify as visual or collision
@@ -109,7 +127,7 @@ class MJCFLogger:
         # Log geometries with CoordinateFrame pointing to body's implicit frame
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
-            body_name = body.name if body.name else "world"
+            body_name = body.name if body.name else _WORLD_BODY_NAME
             body_frame = self.paths.body_frame(body_name)
 
             # Visual geometries (fall back to collision if no visual)
@@ -140,7 +158,7 @@ class MJCFLogger:
         """Update body transforms from MjData (simulation state)."""
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
-            body_name = body.name if body.name else "world"
+            body_name = body.name if body.name else _WORLD_BODY_NAME
             body_path = (
                 self.body_paths[body_id]
                 if body_id < len(self.body_paths)
@@ -212,21 +230,21 @@ class MJCFLogger:
         texuniform = self.model.mat_texuniform[mat_id]
 
         # Calculate UV repeats across the plane
-        # Divide by 2 because MuJoCo's checker texture has 2x2 squares per UV tile
+        # Divide by _CHECKER_TILES_PER_UV because MuJoCo's checker texture has 2x2 squares per UV tile
         plane_size_x = 2 * plane_half_x
         plane_size_y = 2 * plane_half_y
         if texuniform:
-            num_repeats_x = (texrepeat[0] * plane_size_x) / 2
-            num_repeats_y = (texrepeat[1] * plane_size_y) / 2
+            num_repeats_x = (texrepeat[0] * plane_size_x) / _CHECKER_TILES_PER_UV
+            num_repeats_y = (texrepeat[1] * plane_size_y) / _CHECKER_TILES_PER_UV
         else:
-            num_repeats_x = texrepeat[0] / 2
-            num_repeats_y = texrepeat[1] / 2
+            num_repeats_x = texrepeat[0] / _CHECKER_TILES_PER_UV
+            num_repeats_y = texrepeat[1] / _CHECKER_TILES_PER_UV
 
         uv_half_x = num_repeats_x / 2
         uv_half_y = num_repeats_y / 2
 
-        # Offset UVs by 0.5 so the origin is centered between four tiles
-        uv_offset = 0.5
+        # Offset UVs so the origin is centered between four tiles
+        uv_offset = _UV_CENTER_OFFSET
 
         vertices = np.array(
             [
@@ -287,7 +305,9 @@ class MJCFLogger:
                 recording=recording,
             )
         else:
-            vertex_colors = np.tile((rgba * 255).astype(np.uint8), (len(vertices), 1))
+            vertex_colors = np.tile(
+                (rgba * _RGBA_MAX).astype(np.uint8), (len(vertices), 1)
+            )
             rr.log(
                 entity_path,
                 rr.Mesh3D(
@@ -310,9 +330,9 @@ class MJCFLogger:
     ) -> None:
         """Log primitive geometry using Rerun's native primitives."""
         geom_type = geom.type.item()
-        color = (rgba * 255).astype(np.uint8)
+        color = (rgba * _RGBA_MAX).astype(np.uint8)
         if self.opacity is not None:
-            color[3] = int(self.opacity * 255)
+            color[3] = int(self.opacity * _RGBA_MAX)
 
         match geom_type:
             case mujoco.mjtGeom.mjGEOM_SPHERE:
@@ -659,7 +679,7 @@ def main() -> None:
         return
 
     data = mujoco.MjData(model)
-    log_interval = 1.0 / 30.0
+    log_interval = 1.0 / _LOG_FPS
     last_log_time = 0.0
 
     while True:
