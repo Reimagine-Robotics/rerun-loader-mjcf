@@ -801,7 +801,7 @@ def main() -> None:
     rr.init(app_id, recording_id=args.recording_id, spawn=True)
 
     model = mujoco.MjModel.from_xml_path(str(filepath))
-    mjcf_logger = MJCFLogger(model, log_collision=True)
+    mjcf_logger = MJCFLogger(model)
     rr.set_time("sim_time", duration=0.0)
     mjcf_logger.log_model()
 
