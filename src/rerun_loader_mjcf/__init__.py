@@ -78,17 +78,9 @@ class MJCFLogger:
             if isinstance(model_or_path, mujoco.MjModel)
             else mujoco.MjModel.from_xml_path(str(model_or_path))
         )
-        self.entity_path_prefix = entity_path_prefix
         self.opacity = opacity
         self.log_collision = log_collision
         self.paths = MJCFLogPaths(entity_path_prefix)
-        self.body_paths: list[str] = []
-
-    def _add_entity_path_prefix(self, entity_path: str) -> str:
-        """Add prefix (if passed) to entity path."""
-        if self.entity_path_prefix:
-            return f"{self.entity_path_prefix}/{entity_path}"
-        return entity_path
 
     def _get_albedo_factor(self) -> list[float] | None:
         """Get albedo factor for transparency if opacity is set."""
@@ -132,13 +124,9 @@ class MJCFLogger:
 
         Creates MjData internally to compute forward kinematics and set initial transforms.
         """
-        self.body_paths = []
-
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = _body_name(body)
-            self.body_paths.append(self.paths.body_path(body_name))
-
             body_frame = self.paths.body_frame(body_name)
             visual_geoms, collision_geoms = self._get_body_geoms(body_id)
 
@@ -168,14 +156,9 @@ class MJCFLogger:
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = _body_name(body)
-            body_path = (
-                self.body_paths[body_id]
-                if body_id < len(self.body_paths)
-                else self._add_entity_path_prefix(body_name)
-            )
 
             rr.log(
-                body_path,
+                self.paths.body_path(body_name),
                 rr.Transform3D(
                     translation=data.xpos[body_id],
                     quaternion=quat_wxyz_to_xyzw(data.xquat[body_id]),
@@ -692,7 +675,8 @@ class MJCFRecorder:
             raise RuntimeError("No timeline data recorded")
 
         for body_id in range(self.logger.model.nbody):
-            body_path = self.logger.body_paths[body_id]
+            body = self.logger.model.body(body_id)
+            body_path = self.logger.paths.body_path(_body_name(body))
 
             # Convert wxyz (MuJoCo) to xyzw (Rerun) for all timesteps
             quats_xyzw = np.column_stack(
