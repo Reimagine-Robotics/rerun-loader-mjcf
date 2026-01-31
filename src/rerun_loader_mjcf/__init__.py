@@ -15,8 +15,6 @@ if TYPE_CHECKING:
 _MJCF_NO_ID = -1
 # Multiplier for plane extent when size is not specified (affects number of tiles)
 _PLANE_EXTENT_MULTIPLIER = 1.0
-# Default body name for unnamed bodies (body ID 0)
-_WORLD_BODY_NAME = "world"
 # MuJoCo collision class convention (Menagerie style)
 _VISUAL_CONTYPE = 0
 _VISUAL_CONAFFINITY = 0
@@ -27,8 +25,16 @@ _CHECKER_TILES_PER_UV = 2
 _UV_CENTER_OFFSET = 0.5
 # RGBA color range
 _RGBA_MAX = 255
-# Default simulation logging rate
-_LOG_FPS = 30.0
+
+
+def _body_name(body: mujoco.MjsBody) -> str:
+    """Get body name, defaulting to body_{id} if unnamed."""
+    return body.name if body.name else f"body_{body.id}"
+
+
+def _geom_name(geom: mujoco.MjsGeom) -> str:
+    """Get geom name, defaulting to geom_{id} if unnamed."""
+    return geom.name if geom.name else f"geom_{geom.id}"
 
 
 @dataclasses.dataclass
@@ -130,7 +136,7 @@ class MJCFLogger:
 
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
-            body_name = body.name if body.name else _WORLD_BODY_NAME
+            body_name = _body_name(body)
             self.body_paths.append(self.paths.body_path(body_name))
 
             body_frame = self.paths.body_frame(body_name)
@@ -138,14 +144,14 @@ class MJCFLogger:
 
             # Visual geometries (fall back to collision if no visual)
             for geom in visual_geoms or collision_geoms:
-                geom_name = geom.name if geom.name else f"geom_{geom.id}"
+                geom_name = _geom_name(geom)
                 entity_path = f"{self.paths.visual_root}/{body_name}/{geom_name}"
                 self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
             # Collision geometries
             if self.log_collision:
                 for geom in collision_geoms:
-                    geom_name = geom.name if geom.name else f"geom_{geom.id}"
+                    geom_name = _geom_name(geom)
                     entity_path = f"{self.paths.collision_root}/{body_name}/{geom_name}"
                     self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
@@ -161,7 +167,7 @@ class MJCFLogger:
         """Update body transforms from MjData (simulation state)."""
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
-            body_name = body.name if body.name else _WORLD_BODY_NAME
+            body_name = _body_name(body)
             body_path = (
                 self.body_paths[body_id]
                 if body_id < len(self.body_paths)
@@ -180,8 +186,8 @@ class MJCFLogger:
     def _get_visual_geom_path(self, body_id: int, geom: mujoco.MjsGeom) -> str:
         """Get the visual geometry entity path for a geom."""
         body = self.model.body(body_id)
-        body_name = body.name if body.name else _WORLD_BODY_NAME
-        geom_name = geom.name if geom.name else f"geom_{geom.id}"
+        body_name = _body_name(body)
+        geom_name = _geom_name(geom)
         return f"{self.paths.visual_root}/{body_name}/{geom_name}"
 
     def set_body_color(
@@ -758,7 +764,9 @@ def main() -> None:
         return
 
     data = mujoco.MjData(model)
-    log_interval = 1.0 / _LOG_FPS
+    # Default simulation logging rate
+    log_fps = 30.0
+    log_interval = 1.0 / log_fps
     last_log_time = 0.0
 
     while True:
