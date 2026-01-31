@@ -64,6 +64,33 @@ rr.set_time("frame", sequence=1)
 logger.log_data(data)
 ```
 
+#### Options
+
+```python
+logger = rerun_loader_mjcf.MJCFLogger(
+    model,
+    entity_path_prefix="robot",  # Prefix for all entity paths
+    opacity=0.5,                 # Transparency (0.0 to 1.0)
+    log_collision=True,          # Log collision geometries (default: False)
+)
+```
+
+When `log_collision=True`, collision geometries are logged to a separate entity path (`{prefix}/collision_geometries/`) which can be toggled in the Rerun viewer.
+
+To log collision geometries but hide them by default:
+
+```python
+import rerun.blueprint as rrb
+
+logger = rerun_loader_mjcf.MJCFLogger(model, log_collision=True)
+logger.log_model()
+
+blueprint = rrb.Spatial3DView(
+    overrides={logger.paths.collision_root: rrb.EntityBehavior(visible=False)}
+)
+rr.send_blueprint(blueprint)
+```
+
 ### Recording Simulations
 
 For efficient batch recording of simulations, use `MJCFRecorder`:
