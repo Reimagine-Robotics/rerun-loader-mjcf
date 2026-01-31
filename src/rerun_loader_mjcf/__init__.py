@@ -102,6 +102,25 @@ class MJCFLogger:
             and geom.conaffinity.item() == _VISUAL_CONAFFINITY
         ) and (geom.group.item() != _COLLISION_GROUP)
 
+    def _get_body_geoms(self, body_id: int) -> tuple[list, list]:
+        """Get visual and collision geoms for a body.
+
+        Returns:
+            visual_geoms: Geoms classified as visual-only.
+            collision_geoms: Geoms classified as collision (may be used as visual fallback).
+        """
+        visual_geoms = []
+        collision_geoms = []
+        for geom_id in range(self.model.ngeom):
+            geom = self.model.geom(geom_id)
+            if geom.bodyid.item() != body_id:
+                continue
+            if self._is_visual_geom(geom):
+                visual_geoms.append(geom)
+            else:
+                collision_geoms.append(geom)
+        return visual_geoms, collision_geoms
+
     def log_model(self, recording: rr.RecordingStream | None = None) -> None:
         """Log MJCF model geometry to Rerun.
 
@@ -109,42 +128,23 @@ class MJCFLogger:
         """
         self.body_paths = []
 
-        # First pass: collect body paths
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = body.name if body.name else _WORLD_BODY_NAME
             self.body_paths.append(self.paths.body_path(body_name))
 
-        # Group geoms by body and classify as visual or collision
-        body_visual_geoms: dict[int, list] = {i: [] for i in range(self.model.nbody)}
-        body_collision_geoms: dict[int, list] = {i: [] for i in range(self.model.nbody)}
-        for geom_id in range(self.model.ngeom):
-            geom = self.model.geom(geom_id)
-            body_id = geom.bodyid.item()
-            if self._is_visual_geom(geom):
-                body_visual_geoms[body_id].append(geom)
-            else:
-                body_collision_geoms[body_id].append(geom)
-
-        # Log geometries with CoordinateFrame pointing to body's implicit frame
-        for body_id in range(self.model.nbody):
-            body = self.model.body(body_id)
-            body_name = body.name if body.name else _WORLD_BODY_NAME
             body_frame = self.paths.body_frame(body_name)
+            visual_geoms, collision_geoms = self._get_body_geoms(body_id)
 
             # Visual geometries (fall back to collision if no visual)
-            visual_geoms = body_visual_geoms[body_id]
-            if not visual_geoms:
-                visual_geoms = body_collision_geoms[body_id]
-
-            for geom in visual_geoms:
+            for geom in visual_geoms or collision_geoms:
                 geom_name = geom.name if geom.name else f"geom_{geom.id}"
                 entity_path = f"{self.paths.visual_root}/{body_name}/{geom_name}"
                 self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
             # Collision geometries
             if self.log_collision:
-                for geom in body_collision_geoms[body_id]:
+                for geom in collision_geoms:
                     geom_name = geom.name if geom.name else f"geom_{geom.id}"
                     entity_path = f"{self.paths.collision_root}/{body_name}/{geom_name}"
                     self._log_geom_with_frame(entity_path, geom, body_frame, recording)
@@ -176,6 +176,81 @@ class MJCFLogger:
                 ),
                 recording=recording,
             )
+
+    def _get_visual_geom_path(self, body_id: int, geom: mujoco.MjsGeom) -> str:
+        """Get the visual geometry entity path for a geom."""
+        body = self.model.body(body_id)
+        body_name = body.name if body.name else _WORLD_BODY_NAME
+        geom_name = geom.name if geom.name else f"geom_{geom.id}"
+        return f"{self.paths.visual_root}/{body_name}/{geom_name}"
+
+    def set_body_color(
+        self,
+        body_id: int,
+        rgba: list[float],
+        recording: rr.RecordingStream | None = None,
+    ) -> None:
+        """Set color for all visual geometries of a body.
+
+        Args:
+            body_id: Body index.
+            rgba: RGBA color as floats [0.0-1.0].
+            recording: Optional Rerun recording stream.
+
+        Note:
+            Only affects visual geometries, not collision geometries.
+        """
+        visual_geoms, collision_geoms = self._get_body_geoms(body_id)
+        rgba = np.array(rgba, dtype=np.float32)
+
+        for geom in visual_geoms or collision_geoms:
+            geom_type = geom.type.item()
+            if geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
+                continue
+            path = self._get_visual_geom_path(body_id, geom)
+            if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+                rr.log(
+                    path,
+                    rr.Mesh3D.from_fields(albedo_factor=rgba),
+                    recording=recording,
+                )
+            else:
+                self._log_primitive_geom(path, geom, rgba, recording)
+
+    def reset_body_color(
+        self,
+        body_id: int,
+        recording: rr.RecordingStream | None = None,
+    ) -> None:
+        """Reset body geometries to their original colors.
+
+        Args:
+            body_id: Body index.
+            recording: Optional Rerun recording stream.
+
+        Note:
+            Only affects visual geometries, not collision geometries.
+            For meshes, resets albedo_factor to neutral (white) since vertex_colors
+            already contain the original color.
+            For primitives, restores the original material/geom color.
+        """
+        visual_geoms, collision_geoms = self._get_body_geoms(body_id)
+
+        for geom in visual_geoms or collision_geoms:
+            geom_type = geom.type.item()
+            if geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
+                continue
+            path = self._get_visual_geom_path(body_id, geom)
+            if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+                # Meshes use vertex_colors for base color, so reset albedo_factor to neutral
+                rr.log(
+                    path,
+                    rr.Mesh3D.from_fields(albedo_factor=[1.0, 1.0, 1.0, 1.0]),
+                    recording=recording,
+                )
+            else:
+                _, _, rgba = self._get_geom_material(geom)
+                self._log_primitive_geom(path, geom, rgba, recording)
 
     def _get_geom_material(
         self, geom: mujoco.MjsGeom
@@ -329,9 +404,13 @@ class MJCFLogger:
         entity_path: str,
         geom: mujoco.MjsGeom,
         rgba: npt.NDArray[np.float32],
-        recording: rr.RecordingStream,
+        recording: rr.RecordingStream | None,
     ) -> None:
-        """Log primitive geometry using Rerun's native primitives."""
+        """Log a primitive geometry with the given color.
+
+        Re-logs the full geometry because Rerun primitives don't support
+        partial color updates like meshes do.
+        """
         geom_type = geom.type.item()
         color = (rgba * _RGBA_MAX).astype(np.uint8)
         if self.opacity is not None:
@@ -347,10 +426,8 @@ class MJCFLogger:
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
-                    static=True,
                     recording=recording,
                 )
-
             case mujoco.mjtGeom.mjGEOM_ELLIPSOID:
                 rx, ry, rz = geom.size
                 rr.log(
@@ -360,10 +437,8 @@ class MJCFLogger:
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
-                    static=True,
                     recording=recording,
                 )
-
             case mujoco.mjtGeom.mjGEOM_BOX:
                 hx, hy, hz = geom.size
                 rr.log(
@@ -373,10 +448,8 @@ class MJCFLogger:
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
-                    static=True,
                     recording=recording,
                 )
-
             case mujoco.mjtGeom.mjGEOM_CAPSULE:
                 radius, half_length, _ = geom.size
                 rr.log(
@@ -388,10 +461,8 @@ class MJCFLogger:
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
-                    static=True,
                     recording=recording,
                 )
-
             case mujoco.mjtGeom.mjGEOM_CYLINDER:
                 radius, half_height, _ = geom.size
                 rr.log(
@@ -403,10 +474,8 @@ class MJCFLogger:
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
-                    static=True,
                     recording=recording,
                 )
-
             case _:
                 raise NotImplementedError(
                     f"Unsupported geom type: {geom_type} ({mujoco.mjtGeom(geom_type).name}) "
