@@ -37,6 +37,28 @@ def _geom_name(geom: mujoco.MjsGeom) -> str:
     return geom.name if geom.name else f"geom_{geom.id}"
 
 
+def _is_visual_geom(geom: mujoco.MjsGeom) -> bool:
+    """Check if geom is visual-only (not for collision)."""
+    return (
+        geom.contype.item() == _VISUAL_CONTYPE
+        and geom.conaffinity.item() == _VISUAL_CONAFFINITY
+    ) and (geom.group.item() != _COLLISION_GROUP)
+
+
+def _build_body_geoms(model: mujoco.MjModel) -> dict[int, tuple[list, list]]:
+    """Build mapping of body_id -> (visual_geoms, collision_geoms)."""
+    visual: dict[int, list] = {i: [] for i in range(model.nbody)}
+    collision: dict[int, list] = {i: [] for i in range(model.nbody)}
+    for geom_id in range(model.ngeom):
+        geom = model.geom(geom_id)
+        body_id = geom.bodyid.item()
+        if _is_visual_geom(geom):
+            visual[body_id].append(geom)
+        else:
+            collision[body_id].append(geom)
+    return {i: (visual[i], collision[i]) for i in range(model.nbody)}
+
+
 @dataclasses.dataclass
 class MJCFLogPaths:
     """Entity paths for MJCF logging."""
@@ -81,43 +103,13 @@ class MJCFLogger:
         self.opacity = opacity
         self.log_collision = log_collision
         self.paths = MJCFLogPaths(entity_path_prefix)
+        self._body_geoms = _build_body_geoms(self.model)
 
     def _get_albedo_factor(self) -> list[float] | None:
         """Get albedo factor for transparency if opacity is set."""
         if self.opacity is None:
             return None
         return [1.0, 1.0, 1.0, self.opacity]
-
-    def _is_visual_geom(self, geom: mujoco.MjsGeom) -> bool:
-        """Check if geom is a visual-only geom (not for collision).
-
-        Collision class convention (MuJoCo Menagerie style):
-        - "visual" class: contype="0" conaffinity="0" group="2" (rendering only, no collision)
-        - "collision" class: group="3" (physics simulation, collision enabled by default)
-        """
-        return (
-            geom.contype.item() == _VISUAL_CONTYPE
-            and geom.conaffinity.item() == _VISUAL_CONAFFINITY
-        ) and (geom.group.item() != _COLLISION_GROUP)
-
-    def _get_body_geoms(self, body_id: int) -> tuple[list, list]:
-        """Get visual and collision geoms for a body.
-
-        Returns:
-            visual_geoms: Geoms classified as visual-only.
-            collision_geoms: Geoms classified as collision (may be used as visual fallback).
-        """
-        visual_geoms = []
-        collision_geoms = []
-        for geom_id in range(self.model.ngeom):
-            geom = self.model.geom(geom_id)
-            if geom.bodyid.item() != body_id:
-                continue
-            if self._is_visual_geom(geom):
-                visual_geoms.append(geom)
-            else:
-                collision_geoms.append(geom)
-        return visual_geoms, collision_geoms
 
     def log_model(self, recording: rr.RecordingStream | None = None) -> None:
         """Log MJCF model geometry to Rerun.
@@ -128,7 +120,7 @@ class MJCFLogger:
             body = self.model.body(body_id)
             body_name = _body_name(body)
             body_frame = self.paths.body_frame(body_name)
-            visual_geoms, collision_geoms = self._get_body_geoms(body_id)
+            visual_geoms, collision_geoms = self._body_geoms[body_id]
 
             # Visual geometries (fall back to collision if no visual)
             for geom in visual_geoms or collision_geoms:
@@ -189,7 +181,7 @@ class MJCFLogger:
         Note:
             Only affects visual geometries, not collision geometries.
         """
-        visual_geoms, collision_geoms = self._get_body_geoms(body_id)
+        visual_geoms, collision_geoms = self._body_geoms[body_id]
         rgba = np.array(rgba, dtype=np.float32)
 
         for geom in visual_geoms or collision_geoms:
@@ -226,7 +218,7 @@ class MJCFLogger:
             already contain the original color.
             For primitives, restores the original material/geom color.
         """
-        visual_geoms, collision_geoms = self._get_body_geoms(body_id)
+        visual_geoms, collision_geoms = self._body_geoms[body_id]
 
         for geom in visual_geoms or collision_geoms:
             geom_type = geom.type.item()
