@@ -201,7 +201,7 @@ class MJCFLogger:
             Only affects visual geometries, not collision geometries.
         """
         visual_geoms, collision_geoms = self._body_geoms[body_id]
-        rgba = np.array(rgba, dtype=np.float32)
+        rgba = np.asarray(rgba)
 
         for geom in visual_geoms or collision_geoms:
             geom_type = geom.type.item()
@@ -347,8 +347,7 @@ class MJCFLogger:
                     [0.5 * scl_x - 0.5, 0.5 * scl_y - 0.5],  # (+1, -1)
                     [0.5 * scl_x - 0.5, -0.5 * scl_y - 0.5],  # (+1, +1)
                     [-0.5 * scl_x - 0.5, -0.5 * scl_y - 0.5],  # (-1, +1)
-                ],
-                dtype=np.float32,
+                ]
             )
         else:
             # File texture (PNG): standard UV mapping [0, texrepeat]
@@ -364,8 +363,7 @@ class MJCFLogger:
                     [uv_max_x, uv_max_y],
                     [uv_max_x, 0],
                     [0, 0],
-                ],
-                dtype=np.float32,
+                ]
             )
 
         vertices = np.array(
@@ -374,8 +372,7 @@ class MJCFLogger:
                 [plane_half_x, -plane_half_y, 0],
                 [plane_half_x, plane_half_y, 0],
                 [-plane_half_x, plane_half_y, 0],
-            ],
-            dtype=np.float32,
+            ]
         )
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
 
@@ -487,8 +484,7 @@ class MJCFLogger:
                 [hx, hy, -hz],
                 [hx, -hy, -hz],
                 [-hx, -hy, -hz],
-            ],
-            dtype=np.float32,
+            ]
         )
 
         # Normals for each face
@@ -518,8 +514,7 @@ class MJCFLogger:
                 [0, 0, -1],
                 [0, 0, -1],
                 [0, 0, -1],  # -Z
-            ],
-            dtype=np.float32,
+            ]
         )
 
         # Two triangles per face
@@ -547,7 +542,7 @@ class MJCFLogger:
                 scl_x = texrepeat[0] / hx if hx > 0 else texrepeat[0]
                 scl_y = texrepeat[1] / hy if hy > 0 else texrepeat[1]
 
-            uvs = np.zeros((24, 2), dtype=np.float32)
+            uvs = np.zeros((24, 2))
             for i, v in enumerate(vertices):
                 uvs[i, 0] = 0.5 * scl_x * v[0] - 0.5
                 uvs[i, 1] = -0.5 * scl_y * v[1] - 0.5
@@ -754,8 +749,8 @@ class MJCFLogger:
 
         # Explode mesh: create unique vertex for each face corner
         num_verts = facenum * 3
-        vertices = np.zeros((num_verts, 3), dtype=np.float32)
-        normals = np.zeros((num_verts, 3), dtype=np.float32)
+        vertices = np.zeros((num_verts, 3))
+        normals = np.zeros((num_verts, 3))
 
         for i in range(facenum):
             for j in range(3):
@@ -769,7 +764,7 @@ class MJCFLogger:
         texcoords = None
         if texcoordadr != _MJCF_NO_ID:
             face_tex = self.model.mesh_facetexcoord[faceadr : faceadr + facenum]
-            texcoords = np.zeros((num_verts, 2), dtype=np.float32)
+            texcoords = np.zeros((num_verts, 2))
             for i in range(facenum):
                 for j in range(3):
                     texcoords[i * 3 + j] = self.model.mesh_texcoord[
