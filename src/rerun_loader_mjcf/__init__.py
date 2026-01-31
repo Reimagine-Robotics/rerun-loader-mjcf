@@ -21,8 +21,8 @@ _VISUAL_CONAFFINITY = 0
 _COLLISION_GROUP = 3
 # MuJoCo's checker texture has 2x2 squares per UV tile
 _CHECKER_TILES_PER_UV = 2
-# UV offset to center origin between four tiles
-_UV_CENTER_OFFSET = 0.5
+# UV offset matching MuJoCo's glTexGenfv: S = 0.5*scl*X - 0.5, T = -0.5*scl*Y - 0.5
+_UV_CENTER_OFFSET = -0.5
 # RGBA color range
 _RGBA_MAX = 255
 
@@ -259,6 +259,16 @@ class MJCFLogger:
         rgba = self.model.mat_rgba[mat_id] if mat_id != _MJCF_NO_ID else geom.rgba
         return mat_id, tex_id, rgba
 
+    def _is_builtin_texture(self, tex_id: int) -> bool:
+        """Check if texture is a MuJoCo builtin (generated) texture.
+
+        Builtin textures (checker, gradient, flat) require special UV handling.
+        File textures (PNG) use standard UV mapping.
+
+        Uses tex_pathadr: -1 means builtin/generated, >=0 means file path.
+        """
+        return self.model.tex_pathadr[tex_id] == _MJCF_NO_ID
+
     def _log_plane_geom(
         self,
         entity_path: str,
@@ -277,11 +287,11 @@ class MJCFLogger:
         - texrepeat: number of texture repeats
         - texuniform: if True, texrepeat is per spatial unit; if False, across whole plane
 
-        MuJoCo's builtin checker texture contains a 2x2 grid of squares per UV tile,
-        so we divide the repeat count by 2 to match the visual tile size.
+        For builtin checker textures: MuJoCo's checker contains a 2x2 grid of squares
+        per UV tile, so we divide by 2 and offset to center origin between tiles.
 
-        UV coordinates are centered around origin with a 0.5 offset so that the
-        world origin (0,0) sits at the center of four tiles, matching MuJoCo's rendering.
+        For file textures (PNG images like AprilTags): use standard UV mapping
+        based on texrepeat without checker-specific adjustments.
         """
         if tex_id == _MJCF_NO_ID:
             print(f"Warning: Skipping plane geom '{geom.name}' without texture.")
@@ -294,23 +304,49 @@ class MJCFLogger:
 
         texrepeat = self.model.mat_texrepeat[mat_id]
         texuniform = self.model.mat_texuniform[mat_id]
+        is_checker = self._is_builtin_texture(tex_id)
 
         # Calculate UV repeats across the plane
-        # Divide by _CHECKER_TILES_PER_UV because MuJoCo's checker texture has 2x2 squares per UV tile
         plane_size_x = 2 * plane_half_x
         plane_size_y = 2 * plane_half_y
-        if texuniform:
-            num_repeats_x = (texrepeat[0] * plane_size_x) / _CHECKER_TILES_PER_UV
-            num_repeats_y = (texrepeat[1] * plane_size_y) / _CHECKER_TILES_PER_UV
+
+        if is_checker:
+            # Match MuJoCo's glTexGenfv: S = 0.5*scl*x - 0.5, T = -0.5*scl*y - 0.5
+            # Divide scl by 2 for checker's 2x2 pattern per UV tile
+            if texuniform:
+                scl_x = (texrepeat[0] * plane_size_x) / _CHECKER_TILES_PER_UV
+                scl_y = (texrepeat[1] * plane_size_y) / _CHECKER_TILES_PER_UV
+            else:
+                scl_x = texrepeat[0] / _CHECKER_TILES_PER_UV
+                scl_y = texrepeat[1] / _CHECKER_TILES_PER_UV
+            # Vertices at normalized positions: -1, +1
+            # U = 0.5*scl*x - 0.5, V = -0.5*scl*y - 0.5
+            uvs = np.array(
+                [
+                    [-0.5 * scl_x - 0.5, 0.5 * scl_y - 0.5],  # (-1, -1)
+                    [0.5 * scl_x - 0.5, 0.5 * scl_y - 0.5],  # (+1, -1)
+                    [0.5 * scl_x - 0.5, -0.5 * scl_y - 0.5],  # (+1, +1)
+                    [-0.5 * scl_x - 0.5, -0.5 * scl_y - 0.5],  # (-1, +1)
+                ],
+                dtype=np.float32,
+            )
         else:
-            num_repeats_x = texrepeat[0] / _CHECKER_TILES_PER_UV
-            num_repeats_y = texrepeat[1] / _CHECKER_TILES_PER_UV
-
-        uv_half_x = num_repeats_x / 2
-        uv_half_y = num_repeats_y / 2
-
-        # Offset UVs so the origin is centered between four tiles
-        uv_offset = _UV_CENTER_OFFSET
+            # File texture (PNG): standard UV mapping [0, texrepeat]
+            if texuniform:
+                uv_max_x = texrepeat[0] * plane_size_x
+                uv_max_y = texrepeat[1] * plane_size_y
+            else:
+                uv_max_x = texrepeat[0]
+                uv_max_y = texrepeat[1]
+            uvs = np.array(
+                [
+                    [0, uv_max_y],
+                    [uv_max_x, uv_max_y],
+                    [uv_max_x, 0],
+                    [0, 0],
+                ],
+                dtype=np.float32,
+            )
 
         vertices = np.array(
             [
@@ -322,15 +358,7 @@ class MJCFLogger:
             dtype=np.float32,
         )
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
-        uvs = np.array(
-            [
-                [-uv_half_x + uv_offset, -uv_half_y + uv_offset],
-                [uv_half_x + uv_offset, -uv_half_y + uv_offset],
-                [uv_half_x + uv_offset, uv_half_y + uv_offset],
-                [-uv_half_x + uv_offset, uv_half_y + uv_offset],
-            ],
-            dtype=np.float32,
-        )
+
         rr.log(
             entity_path,
             rr.Mesh3D(
@@ -754,7 +782,7 @@ def main() -> None:
     rr.init(app_id, recording_id=args.recording_id, spawn=True)
 
     model = mujoco.MjModel.from_xml_path(str(filepath))
-    mjcf_logger = MJCFLogger(model)
+    mjcf_logger = MJCFLogger(model, log_collision=True)
     mjcf_logger.log_model()
 
     if not args.simulate:
