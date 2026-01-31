@@ -24,7 +24,9 @@ if TYPE_CHECKING:
 
     import numpy.typing as npt
 
+# MuJoCo uses -1 to indicate "no reference" for IDs (material, texture, mesh, etc.)
 _MJCF_NO_ID = -1
+# Multiplier for plane extent when size is not specified (affects number of tiles)
 _PLANE_EXTENT_MULTIPLIER = 1.0
 _WORLD_FRAME = "world"
 
@@ -46,7 +48,9 @@ class MJCFLogPaths:
     def __post_init__(self) -> None:
         base = self.root.rstrip("/") if self.root else ""
         self.visual_root = f"{base}/visual_geometries" if base else "visual_geometries"
-        self.collision_root = f"{base}/collision_geometries" if base else "collision_geometries"
+        self.collision_root = (
+            f"{base}/collision_geometries" if base else "collision_geometries"
+        )
         self.bodies_root = f"{base}/bodies" if base else "bodies"
 
     def body_path(self, body_name: str) -> str:
@@ -87,12 +91,18 @@ class MJCFLogger:
         self.body_names: list[str] = []
 
     def _get_albedo_factor(self) -> list[float] | None:
+        """Get albedo factor for transparency if opacity is set."""
         if self.opacity is None:
             return None
         return [1.0, 1.0, 1.0, self.opacity]
 
     def _is_visual_geom(self, geom: mujoco.MjsGeom) -> bool:
-        """Check if geom is visual-only (not for collision)."""
+        """Check if geom is a visual-only geom (not for collision).
+
+        Collision class convention (MuJoCo Menagerie style):
+        - "visual" class: contype="0" conaffinity="0" group="2" (rendering only, no collision)
+        - "collision" class: group="3" (physics simulation, collision enabled by default)
+        """
         return (geom.contype.item() == 0 and geom.conaffinity.item() == 0) and (
             geom.group.item() != 3
         )
@@ -201,6 +211,13 @@ class MJCFLogger:
     def _get_geom_material(
         self, geom: mujoco.MjsGeom
     ) -> tuple[int, int, npt.NDArray[np.float32]]:
+        """Get material info for a geom.
+
+        Returns:
+            mat_id: Material ID (-1 if none)
+            tex_id: Texture ID (-1 if none)
+            rgba: RGBA color array
+        """
         mat_id = geom.matid.item()
         tex_id = (
             self.model.mat_texid[mat_id, mujoco.mjtTextureRole.mjTEXROLE_RGB]
@@ -218,6 +235,14 @@ class MJCFLogger:
         npt.NDArray[np.float32],
         npt.NDArray[np.float32] | None,
     ]:
+        """Get mesh vertices, faces, normals, and optionally texture coordinates.
+
+        Returns:
+            vertices: (N, 3) array of vertex positions
+            faces: (M, 3) array of triangle indices
+            normals: (N, 3) array of vertex normals
+            texcoords: (N, 2) array of UV coordinates, or None if no texture coords
+        """
         mesh = self.model.mesh(mesh_id)
         vertadr, vertnum = mesh.vertadr.item(), mesh.vertnum.item()
         faceadr, facenum = mesh.faceadr.item(), mesh.facenum.item()
@@ -236,6 +261,7 @@ class MJCFLogger:
         return vertices, faces, normals, texcoords
 
     def _get_texture(self, tex_id: int) -> npt.NDArray[np.uint8]:
+        """Extract texture data from MjModel."""
         return self.model.tex(tex_id).data
 
     def _log_plane(
@@ -246,6 +272,22 @@ class MJCFLogger:
         tex_id: int,
         recording: rr.RecordingStream | None,
     ) -> None:
+        """Log a plane geom as a textured quad.
+
+        MuJoCo plane geometry:
+        - size[0], size[1]: half-extents for rendering (0 means use model extent)
+        - size[2]: grid spacing (unused here)
+
+        MuJoCo texture tiling (controlled by material attributes):
+        - texrepeat: number of texture repeats
+        - texuniform: if True, texrepeat is per spatial unit; if False, across whole plane
+
+        MuJoCo's builtin checker texture contains a 2x2 grid of squares per UV tile,
+        so we divide the repeat count by 2 to match the visual tile size.
+
+        UV coordinates are centered around origin with a 0.5 offset so that the
+        world origin (0,0) sits at the center of four tiles, matching MuJoCo's rendering.
+        """
         if tex_id == _MJCF_NO_ID:
             return
 
@@ -299,6 +341,7 @@ class MJCFLogger:
         rgba: npt.NDArray[np.float32],
         recording: rr.RecordingStream | None,
     ) -> None:
+        """Log a mesh geom."""
         vertices, faces, normals, texcoords = self._get_mesh_data(geom.dataid.item())
 
         if tex_id != _MJCF_NO_ID and texcoords is not None:
@@ -337,6 +380,7 @@ class MJCFLogger:
         rgba: npt.NDArray[np.float32],
         recording: rr.RecordingStream | None,
     ) -> None:
+        """Log primitive geometry using Rerun's native primitives."""
         geom_type = geom.type.item()
         color = (rgba * 255).astype(np.uint8)
         if self.opacity is not None:
@@ -412,7 +456,9 @@ class MJCFLogger:
 
 
 class MJCFRecorder:
-    """Context manager for batched recording of MuJoCo simulations.
+    """Context manager for efficient batched recording of MuJoCo simulations.
+
+    Uses Rerun's columnar API for better performance with time-series data.
 
     Example:
         logger = MJCFLogger(model)
@@ -422,6 +468,7 @@ class MJCFRecorder:
             for _ in range(1000):
                 mujoco.mj_step(model, data)
                 recorder.record(data)
+        # auto-flushes on exit
     """
 
     def __init__(
@@ -430,6 +477,13 @@ class MJCFRecorder:
         timeline_name: str = "sim_time",
         recording: rr.RecordingStream | None = None,
     ) -> None:
+        """Initialize the recorder.
+
+        Args:
+            logger: MJCFLogger instance (must have log_model() called first)
+            timeline_name: Name of the timeline in Rerun.
+            recording: Optional Rerun recording stream.
+        """
         self.logger = logger
         self.timeline_name = timeline_name
         self.recording = recording
@@ -454,6 +508,16 @@ class MJCFRecorder:
         duration: float | None = None,
         timestamp: float | None = None,
     ) -> None:
+        """Record simulation state for later batched logging.
+
+        Args:
+            data: MuJoCo simulation data.
+            sequence: Sequence index (mutually exclusive with duration/timestamp).
+            duration: Duration in seconds (mutually exclusive with sequence/timestamp).
+            timestamp: Timestamp in seconds (mutually exclusive with sequence/duration).
+
+        If none specified, defaults to duration=data.time.
+        """
         if sequence is not None:
             self._sequences.append(sequence)
         elif duration is not None:
@@ -467,6 +531,7 @@ class MJCFRecorder:
         self._quaternions.append(data.xquat.copy())
 
     def flush(self) -> None:
+        """Send accumulated data using columnar API."""
         if not self._positions:
             return
 
@@ -516,11 +581,21 @@ def main() -> None:
     import pathlib
     import time
 
-    parser = argparse.ArgumentParser(description="Rerun MJCF loader plugin.")
+    parser = argparse.ArgumentParser(
+        description="""
+    This is an executable data-loader plugin for the Rerun Viewer for MJCF files.
+        """
+    )
     parser.add_argument("filepath", type=str)
-    parser.add_argument("--application-id", type=str)
-    parser.add_argument("--recording-id", type=str)
-    parser.add_argument("--simulate", action="store_true")
+    parser.add_argument(
+        "--application-id", type=str, help="Recommended ID for the application"
+    )
+    parser.add_argument(
+        "--recording-id", type=str, help="optional recommended ID for the recording"
+    )
+    parser.add_argument(
+        "--simulate", action="store_true", help="run real-time simulation loop"
+    )
     args = parser.parse_args()
 
     filepath = pathlib.Path(args.filepath)
