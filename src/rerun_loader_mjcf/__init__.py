@@ -729,28 +729,18 @@ class MJCFLogger:
         face_norm = self.model.mesh_facenormal[faceadr : faceadr + facenum]
 
         # Explode mesh: create unique vertex for each face corner
-        num_verts = facenum * 3
-        vertices = np.zeros((num_verts, 3))
-        normals = np.zeros((num_verts, 3))
-
-        for i in range(facenum):
-            for j in range(3):
-                vertices[i * 3 + j] = self.model.mesh_vert[vertadr + face_vert[i, j]]
-                normals[i * 3 + j] = self.model.mesh_normal[normaladr + face_norm[i, j]]
+        vertices = self.model.mesh_vert[vertadr + face_vert.flatten()]
+        normals = self.model.mesh_normal[normaladr + face_norm.flatten()]
 
         # Sequential face indices
+        num_verts = facenum * 3
         faces = np.arange(num_verts, dtype=np.int32).reshape(-1, 3)
 
         # Texcoords (also per-face-vertex via mesh_facetexcoord)
         texcoords = None
         if texcoordadr != _MJCF_NO_ID:
             face_tex = self.model.mesh_facetexcoord[faceadr : faceadr + facenum]
-            texcoords = np.zeros((num_verts, 2))
-            for i in range(facenum):
-                for j in range(3):
-                    texcoords[i * 3 + j] = self.model.mesh_texcoord[
-                        texcoordadr + face_tex[i, j]
-                    ]
+            texcoords = self.model.mesh_texcoord[texcoordadr + face_tex.flatten()]
 
         return vertices, faces, normals, texcoords
 
