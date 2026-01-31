@@ -12,7 +12,7 @@ MuJoCo provides absolute world-frame transforms, so all bodies use "world" as pa
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import dataclasses
 from typing import TYPE_CHECKING
 
 import mujoco
@@ -36,14 +36,14 @@ def _quat_wxyz_to_xyzw(quat: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]
     return np.array([quat[1], quat[2], quat[3], quat[0]])
 
 
-@dataclass
+@dataclasses.dataclass
 class MJCFLogPaths:
     """Entity paths for MJCF logging."""
 
     root: str
-    visual_root: str = field(init=False)
-    collision_root: str = field(init=False)
-    bodies_root: str = field(init=False)
+    visual_root: str = dataclasses.field(init=False)
+    collision_root: str = dataclasses.field(init=False)
+    bodies_root: str = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
         base = self.root.rstrip("/") if self.root else ""
