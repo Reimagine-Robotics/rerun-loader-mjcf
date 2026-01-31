@@ -25,13 +25,25 @@ _CHECKER_TILES_PER_UV = 2
 _UV_CENTER_OFFSET = -0.5
 # RGBA color range
 _RGBA_MAX = 255
-# Parent frame name for body transforms. MuJoCo guarantees:
-# - Body id=0 is always named "world" (hardcoded, cannot be changed)
-# - No user body can be named "world" (duplicate names rejected)
-# So this is safe to use as the parent frame for all body transforms.
-# See: mujoco/src/xml/xml_native_reader.cc:1070 (mjs_findBody(spec, "world"))
-#      mujoco/src/xml/xml_native_reader.cc:3494-3497 (world body cannot have attributes)
-_WORLD_FRAME = "world"
+
+# Rerun implicit frame prefix: "tf#/path" references Transform3D at that entity as a frame.
+#
+# We use tf# implicit frames instead of URDF-style named frames (child_frame/parent_frame)
+# because named frames have a critical limitation: each child_frame name can only be
+# associated with ONE entity path globally. This means if you have two MJCFLogger instances
+# (e.g., "observation" and "action" prefixes) logging the same robot model, frame names
+# like "gripper" would conflict:
+#   - observation/body_transforms with child_frame="gripper"
+#   - action/body_transforms with child_frame="gripper"
+# Rerun raises: "The entity path associated with a child frame mustn't change"
+#
+# With tf# implicit frames, each entity path automatically gets a unique frame name
+# (tf#/observation/bodies/gripper vs tf#/action/bodies/gripper), avoiding conflicts.
+# The entity hierarchy defines the frame hierarchy, so no explicit parent_frame is needed.
+#
+# See: rerun/crates/store/re_tf/src/lib.rs (lines 18-96) for frame system documentation
+#      rerun/crates/store/re_tf/src/transform_resolution_cache.rs:180 for the error
+_TF = "tf#"
 
 
 def _body_name(body: mujoco.MjsBody) -> str:
@@ -68,15 +80,12 @@ def _build_body_geoms(model: mujoco.MjModel) -> dict[int, tuple[list, list]]:
 
 @dataclasses.dataclass
 class MJCFLogPaths:
-    """Entity paths for MJCF logging.
-
-    All body transforms logged to a single entity with parent_frame/child_frame, geometries reference frames by name.
-    """
+    """Entity paths for MJCF logging."""
 
     root: str
     visual_root: str = dataclasses.field(init=False)
     collision_root: str = dataclasses.field(init=False)
-    transforms: str = dataclasses.field(init=False)
+    bodies_root: str = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
         base = self.root.rstrip("/") if self.root else ""
@@ -84,7 +93,15 @@ class MJCFLogPaths:
         self.collision_root = (
             f"{base}/collision_geometries" if base else "collision_geometries"
         )
-        self.transforms = f"{base}/body_transforms" if base else "body_transforms"
+        self.bodies_root = f"{base}/bodies" if base else "bodies"
+
+    def body_path(self, body_name: str) -> str:
+        """Entity path for body transform."""
+        return f"{self.bodies_root}/{body_name}"
+
+    def body_frame(self, body_name: str) -> str:
+        """Implicit frame ID for body (tf#/entity/path format)."""
+        return f"{_TF}/{self.body_path(body_name)}"
 
 
 class MJCFLogger:
@@ -131,20 +148,21 @@ class MJCFLogger:
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = _body_name(body)
+            body_frame = self.paths.body_frame(body_name)
             visual_geoms, collision_geoms = self._body_geoms[body_id]
 
             # Visual geometries (fall back to collision if no visual)
             for geom in visual_geoms or collision_geoms:
                 geom_name = _geom_name(geom)
                 entity_path = f"{self.paths.visual_root}/{body_name}/{geom_name}"
-                self._log_geom_with_frame(entity_path, geom, body_name, recording)
+                self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
             # Collision geometries
             if self.log_collision:
                 for geom in collision_geoms:
                     geom_name = _geom_name(geom)
                     entity_path = f"{self.paths.collision_root}/{body_name}/{geom_name}"
-                    self._log_geom_with_frame(entity_path, geom, body_name, recording)
+                    self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
         # Create MjData and compute forward kinematics for initial state
         data = mujoco.MjData(self.model)
@@ -156,8 +174,6 @@ class MJCFLogger:
         self, data: mujoco.MjData, recording: rr.RecordingStream | None = None
     ) -> None:
         """Update body transforms from MjData (simulation state).
-
-        Logs all body transforms to a single entity with named frames.
 
         Note:
             Call `rr.set_time()` before this method to log on a specific timeline.
@@ -171,14 +187,11 @@ class MJCFLogger:
             body = self.model.body(body_id)
             body_name = _body_name(body)
 
-            # All transforms go to single entity, differentiated by child_frame
             rr.log(
-                self.paths.transforms,
+                self.paths.body_path(body_name),
                 rr.Transform3D(
                     translation=data.xpos[body_id],
                     quaternion=quat_wxyz_to_xyzw(data.xquat[body_id]),
-                    child_frame=body_name,
-                    parent_frame=_WORLD_FRAME,
                 ),
                 recording=recording,
             )
@@ -830,64 +843,45 @@ class MJCFRecorder:
         self._quaternions.append(data.xquat.copy())
 
     def flush(self) -> None:
-        """Send accumulated data using columnar API.
-
-        All transforms go to a single entity with child_frame/parent_frame.
-        Data is flattened: each row is one body at one timestep.
-        """
+        """Send accumulated data using columnar API."""
         if not self._positions:
             return
 
-        positions = np.array(self._positions)  # (num_timesteps, num_bodies, 3)
-        quaternions = np.array(self._quaternions)  # (num_timesteps, num_bodies, 4)
-        num_timesteps = len(positions)
-        num_bodies = self.logger.model.nbody
+        positions = np.array(self._positions)
+        quaternions = np.array(self._quaternions)
 
-        # Get body names
-        body_names = [_body_name(self.logger.model.body(i)) for i in range(num_bodies)]
-
-        # Flatten: each row is one body at one timestep
-        # Order: all bodies at t0, then all bodies at t1, etc.
-        flat_translations = positions.reshape(-1, 3)  # (timesteps * bodies, 3)
-
-        # Convert wxyz (MuJoCo) to xyzw (Rerun) and flatten
-        flat_quats = np.column_stack(
-            [
-                quaternions[:, :, 1].flatten(),
-                quaternions[:, :, 2].flatten(),
-                quaternions[:, :, 3].flatten(),
-                quaternions[:, :, 0].flatten(),
-            ]
-        )
-
-        # Repeat frame names for each timestep
-        flat_child_frames = body_names * num_timesteps
-        flat_parent_frames = [_WORLD_FRAME] * (num_timesteps * num_bodies)
-
-        # Expand time index: each timestep repeated for all bodies
         if self._sequences:
-            flat_times = [t for t in self._sequences for _ in range(num_bodies)]
-            indexes = [rr.TimeColumn(self.timeline_name, sequence=flat_times)]
+            indexes = [rr.TimeColumn(self.timeline_name, sequence=self._sequences)]
         elif self._durations:
-            flat_times = [t for t in self._durations for _ in range(num_bodies)]
-            indexes = [rr.TimeColumn(self.timeline_name, duration=flat_times)]
+            indexes = [rr.TimeColumn(self.timeline_name, duration=self._durations)]
         elif self._timestamps:
-            flat_times = [t for t in self._timestamps for _ in range(num_bodies)]
-            indexes = [rr.TimeColumn(self.timeline_name, timestamp=flat_times)]
+            indexes = [rr.TimeColumn(self.timeline_name, timestamp=self._timestamps)]
         else:
             raise RuntimeError("No timeline data recorded")
 
-        rr.send_columns(
-            self.logger.paths.transforms,
-            indexes=indexes,
-            columns=rr.Transform3D.columns(
-                translation=flat_translations,
-                quaternion=flat_quats,
-                child_frame=flat_child_frames,
-                parent_frame=flat_parent_frames,
-            ),
-            recording=self.recording,
-        )
+        for body_id in range(self.logger.model.nbody):
+            body = self.logger.model.body(body_id)
+            body_path = self.logger.paths.body_path(_body_name(body))
+
+            # Convert wxyz (MuJoCo) to xyzw (Rerun) for all timesteps
+            quats_xyzw = np.column_stack(
+                [
+                    quaternions[:, body_id, 1],
+                    quaternions[:, body_id, 2],
+                    quaternions[:, body_id, 3],
+                    quaternions[:, body_id, 0],
+                ]
+            )
+
+            rr.send_columns(
+                body_path,
+                indexes=indexes,
+                columns=rr.Transform3D.columns(
+                    translation=positions[:, body_id],
+                    quaternion=quats_xyzw,
+                ),
+                recording=self.recording,
+            )
 
         self._sequences.clear()
         self._durations.clear()
