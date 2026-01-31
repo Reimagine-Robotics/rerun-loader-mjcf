@@ -537,11 +537,15 @@ class MJCFLogger:
     ]:
         """Get mesh vertices, faces, normals, and optionally texture coordinates.
 
+        MuJoCo stores per-face-vertex normals via mesh_facenormal, which allows
+        different normals for the same vertex in different faces (for hard edges).
+        We "explode" the mesh so each face corner becomes a unique vertex.
+
         Returns:
-            vertices: (N, 3) array of vertex positions
-            faces: (M, 3) array of triangle indices
-            normals: (N, 3) array of vertex normals
-            texcoords: (N, 2) array of UV coordinates, or None if no texture coords
+            vertices: (M*3, 3) array of vertex positions (one per face corner)
+            faces: (M, 3) array of triangle indices (sequential: 0,1,2,3,4,5,...)
+            normals: (M*3, 3) array of normals (one per face corner)
+            texcoords: (M*3, 2) array of UV coordinates, or None if no texture coords
         """
         if mesh_id == _MJCF_NO_ID:
             raise ValueError("Cannot get mesh data: mesh_id is MJCF_NO_ID (-1)")
@@ -550,23 +554,40 @@ class MJCFLogger:
                 f"Invalid mesh ID {mesh_id}: model only has {self.model.nmesh} meshes"
             )
 
-        vertadr = self.model.mesh(mesh_id).vertadr.item()
-        vertnum = self.model.mesh(mesh_id).vertnum.item()
-        vertices = self.model.mesh_vert[vertadr : vertadr + vertnum]
-        normals = self.model.mesh_normal[vertadr : vertadr + vertnum]
+        mesh = self.model.mesh(mesh_id)
+        vertadr = mesh.vertadr.item()
+        faceadr = mesh.faceadr.item()
+        facenum = mesh.facenum.item()
+        normaladr = self.model.mesh_normaladr[mesh_id]
+        texcoordadr = mesh.texcoordadr.item()
 
-        faceadr = self.model.mesh(mesh_id).faceadr.item()
-        facenum = self.model.mesh(mesh_id).facenum.item()
-        faces = self.model.mesh_face[faceadr : faceadr + facenum]
+        # Get face indices for vertices, normals, and texcoords
+        face_vert = self.model.mesh_face[faceadr : faceadr + facenum]
+        face_norm = self.model.mesh_facenormal[faceadr : faceadr + facenum]
 
-        texcoordadr = self.model.mesh(mesh_id).texcoordadr.item()
-        texcoords = (
-            np.ascontiguousarray(
-                self.model.mesh_texcoord[texcoordadr : texcoordadr + vertnum]
-            ).astype(np.float32)
-            if texcoordadr != _MJCF_NO_ID
-            else None
-        )
+        # Explode mesh: create unique vertex for each face corner
+        num_verts = facenum * 3
+        vertices = np.zeros((num_verts, 3), dtype=np.float32)
+        normals = np.zeros((num_verts, 3), dtype=np.float32)
+
+        for i in range(facenum):
+            for j in range(3):
+                vertices[i * 3 + j] = self.model.mesh_vert[vertadr + face_vert[i, j]]
+                normals[i * 3 + j] = self.model.mesh_normal[normaladr + face_norm[i, j]]
+
+        # Sequential face indices
+        faces = np.arange(num_verts, dtype=np.int32).reshape(-1, 3)
+
+        # Texcoords (also per-face-vertex via mesh_facetexcoord)
+        texcoords = None
+        if texcoordadr != _MJCF_NO_ID:
+            face_tex = self.model.mesh_facetexcoord[faceadr : faceadr + facenum]
+            texcoords = np.zeros((num_verts, 2), dtype=np.float32)
+            for i in range(facenum):
+                for j in range(3):
+                    texcoords[i * 3 + j] = self.model.mesh_texcoord[
+                        texcoordadr + face_tex[i, j]
+                    ]
 
         return vertices, faces, normals, texcoords
 
