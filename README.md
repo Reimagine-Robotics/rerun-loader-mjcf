@@ -91,6 +91,21 @@ blueprint = rrb.Spatial3DView(
 rr.send_blueprint(blueprint)
 ```
 
+#### Dynamic Body Colors
+
+You can change body colors during simulation (e.g., for highlighting):
+
+```python
+# Set a body to red
+logger.set_body_color(body_id=5, rgba=[1.0, 0.0, 0.0, 1.0])
+
+# Reset to original color
+logger.reset_body_color(body_id=5)
+
+# Reset with custom opacity
+logger.reset_body_color(body_id=5, opacity=0.5)
+```
+
 ### Recording Simulations
 
 For efficient batch recording of simulations, use `MJCFRecorder`:
