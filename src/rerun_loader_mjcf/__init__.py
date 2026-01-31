@@ -25,6 +25,8 @@ _CHECKER_TILES_PER_UV = 2
 _UV_CENTER_OFFSET = -0.5
 # RGBA color range
 _RGBA_MAX = 255
+# Rerun implicit frame prefix: "tf#/path" references Transform3D at that entity as a frame.
+_TF = "tf#"
 
 
 def _body_name(body: mujoco.MjsBody) -> str:
@@ -82,7 +84,7 @@ class MJCFLogPaths:
 
     def body_frame(self, body_name: str) -> str:
         """Implicit frame ID for body (tf#/entity/path format)."""
-        return f"tf#/{self.body_path(body_name)}"
+        return f"{_TF}/{self.body_path(body_name)}"
 
 
 class MJCFLogger:
