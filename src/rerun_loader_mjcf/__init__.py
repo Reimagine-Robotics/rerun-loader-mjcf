@@ -111,10 +111,20 @@ class MJCFLogger:
             return None
         return [1.0, 1.0, 1.0, self.opacity]
 
-    def log_model(self, recording: rr.RecordingStream | None = None) -> None:
+    def log_model(
+        self,
+        recording: rr.RecordingStream | None = None,
+    ) -> None:
         """Log MJCF model geometry to Rerun.
 
         Creates MjData internally to compute forward kinematics and set initial transforms.
+
+        Note:
+            Call `rr.set_time()` before this method to log geometry on a specific timeline.
+            Example: `rr.set_time("sim_time", duration=0.0)` to log at t=0 on sim_time.
+
+        Args:
+            recording: Optional Rerun recording stream.
         """
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
@@ -144,7 +154,16 @@ class MJCFLogger:
     def log_data(
         self, data: mujoco.MjData, recording: rr.RecordingStream | None = None
     ) -> None:
-        """Update body transforms from MjData (simulation state)."""
+        """Update body transforms from MjData (simulation state).
+
+        Note:
+            Call `rr.set_time()` before this method to log on a specific timeline.
+            Example: `rr.set_time("sim_time", duration=data.time)`
+
+        Args:
+            data: MuJoCo simulation data containing current body transforms.
+            recording: Optional Rerun recording stream.
+        """
         for body_id in range(self.model.nbody):
             body = self.model.body(body_id)
             body_name = _body_name(body)
@@ -783,6 +802,7 @@ def main() -> None:
 
     model = mujoco.MjModel.from_xml_path(str(filepath))
     mjcf_logger = MJCFLogger(model, log_collision=True)
+    rr.set_time("sim_time", duration=0.0)
     mjcf_logger.log_model()
 
     if not args.simulate:

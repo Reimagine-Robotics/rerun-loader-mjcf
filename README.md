@@ -83,6 +83,7 @@ To log collision geometries but hide them by default:
 import rerun.blueprint as rrb
 
 logger = rerun_loader_mjcf.MJCFLogger(model, log_collision=True)
+rr.set_time("sim_time", duration=0.0)
 logger.log_model()
 
 blueprint = rrb.Spatial3DView(
@@ -121,6 +122,7 @@ data = mujoco.MjData(model)
 rr.init("simulation", spawn=True)
 
 logger = rerun_loader_mjcf.MJCFLogger(model)
+rr.set_time("sim_time", duration=0.0)
 logger.log_model()
 
 # With simulation time (default: uses duration=data.time)
