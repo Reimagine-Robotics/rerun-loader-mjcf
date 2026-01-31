@@ -65,6 +65,7 @@ class MJCFLogger:
         model_or_path: str | pathlib.Path | mujoco.MjModel,
         entity_path_prefix: str = "",
         opacity: float | None = None,
+        log_collision: bool = False,
     ) -> None:
         self.model: mujoco.MjModel = (
             model_or_path
@@ -73,6 +74,7 @@ class MJCFLogger:
         )
         self.entity_path_prefix = entity_path_prefix
         self.opacity = opacity
+        self.log_collision = log_collision
         self.paths = MJCFLogPaths(entity_path_prefix)
         self.body_paths: list[str] = []
 
@@ -140,11 +142,12 @@ class MJCFLogger:
                 entity_path = f"{self.paths.visual_root}/{body_name}/{geom_name}"
                 self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
-            # Collision geometries
-            for geom in body_collision_geoms[body_id]:
-                geom_name = geom.name if geom.name else f"geom_{geom.id}"
-                entity_path = f"{self.paths.collision_root}/{body_name}/{geom_name}"
-                self._log_geom_with_frame(entity_path, geom, body_frame, recording)
+            # Collision geometries (optional)
+            if self.log_collision:
+                for geom in body_collision_geoms[body_id]:
+                    geom_name = geom.name if geom.name else f"geom_{geom.id}"
+                    entity_path = f"{self.paths.collision_root}/{body_name}/{geom_name}"
+                    self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
         # Create MjData and compute forward kinematics for initial state
         data = mujoco.MjData(self.model)
