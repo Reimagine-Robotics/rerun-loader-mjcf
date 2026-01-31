@@ -142,7 +142,7 @@ class MJCFLogger:
                 entity_path = f"{self.paths.visual_root}/{body_name}/{geom_name}"
                 self._log_geom_with_frame(entity_path, geom, body_frame, recording)
 
-            # Collision geometries (optional)
+            # Collision geometries
             if self.log_collision:
                 for geom in body_collision_geoms[body_id]:
                     geom_name = geom.name if geom.name else f"geom_{geom.id}"
@@ -458,7 +458,7 @@ class MJCFLogger:
             recording=recording,
         )
 
-        # Log geometry (reuse existing methods)
+        # Log geometry
         geom_type = geom.type.item()
         mat_id, tex_id, rgba = self._get_geom_material(geom)
 
