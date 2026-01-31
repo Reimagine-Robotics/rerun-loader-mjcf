@@ -220,12 +220,15 @@ class MJCFLogger:
     def reset_body_color(
         self,
         body_id: int,
+        opacity: float | None = None,
         recording: rr.RecordingStream | None = None,
     ) -> None:
         """Reset body geometries to their original colors.
 
         Args:
             body_id: Body index.
+            opacity: Optional opacity override (0.0-1.0). If provided, applies this
+                opacity while preserving original colors.
             recording: Optional Rerun recording stream.
 
         Note:
@@ -243,13 +246,17 @@ class MJCFLogger:
             path = self._get_visual_geom_path(body_id, geom)
             if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
                 # Meshes use vertex_colors for base color, so reset albedo_factor to neutral
+                alpha = opacity if opacity is not None else 1.0
                 rr.log(
                     path,
-                    rr.Mesh3D.from_fields(albedo_factor=[1.0, 1.0, 1.0, 1.0]),
+                    rr.Mesh3D.from_fields(albedo_factor=[1.0, 1.0, 1.0, alpha]),
                     recording=recording,
                 )
             else:
                 _, _, rgba = self._get_geom_material(geom)
+                if opacity is not None:
+                    rgba = rgba.copy()
+                    rgba[3] = opacity
                 self._log_primitive_geom(path, geom, rgba, recording)
 
     def _get_geom_material(
