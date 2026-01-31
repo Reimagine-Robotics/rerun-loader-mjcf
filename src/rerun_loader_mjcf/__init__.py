@@ -243,6 +243,13 @@ class MJCFLogger:
             normals: (N, 3) array of vertex normals
             texcoords: (N, 2) array of UV coordinates, or None if no texture coords
         """
+        if mesh_id == _MJCF_NO_ID:
+            raise ValueError("Cannot get mesh data: mesh_id is MJCF_NO_ID (-1)")
+        if mesh_id >= self.model.nmesh:
+            raise ValueError(
+                f"Invalid mesh ID {mesh_id}: model only has {self.model.nmesh} meshes"
+            )
+
         mesh = self.model.mesh(mesh_id)
         vertadr, vertnum = mesh.vertadr.item(), mesh.vertnum.item()
         faceadr, facenum = mesh.faceadr.item(), mesh.facenum.item()
@@ -289,37 +296,53 @@ class MJCFLogger:
         world origin (0,0) sits at the center of four tiles, matching MuJoCo's rendering.
         """
         if tex_id == _MJCF_NO_ID:
+            print(f"Warning: Skipping plane geom '{geom.name}' without texture.")
             return
 
+        # Plane half-extents: use explicit size or fall back to model extent
         extent = _PLANE_EXTENT_MULTIPLIER * max(self.model.stat.extent, 1.0)
-        hx = geom.size[0] if geom.size[0] > 0 else extent
-        hy = geom.size[1] if geom.size[1] > 0 else extent
+        plane_half_x = geom.size[0] if geom.size[0] > 0 else extent
+        plane_half_y = geom.size[1] if geom.size[1] > 0 else extent
 
         texrepeat = self.model.mat_texrepeat[mat_id]
         texuniform = self.model.mat_texuniform[mat_id]
 
-        sx, sy = 2 * hx, 2 * hy
+        # Calculate UV repeats across the plane
+        # Divide by 2 because MuJoCo's checker texture has 2x2 squares per UV tile
+        plane_size_x = 2 * plane_half_x
+        plane_size_y = 2 * plane_half_y
         if texuniform:
-            rx, ry = (texrepeat[0] * sx) / 2, (texrepeat[1] * sy) / 2
+            num_repeats_x = (texrepeat[0] * plane_size_x) / 2
+            num_repeats_y = (texrepeat[1] * plane_size_y) / 2
         else:
-            rx, ry = texrepeat[0] / 2, texrepeat[1] / 2
+            num_repeats_x = texrepeat[0] / 2
+            num_repeats_y = texrepeat[1] / 2
 
-        ux, uy = rx / 2, ry / 2
+        uv_half_x = num_repeats_x / 2
+        uv_half_y = num_repeats_y / 2
+
+        # Offset UVs by 0.5 so the origin is centered between four tiles
+        uv_offset = 0.5
 
         vertices = np.array(
-            [[-hx, -hy, 0], [hx, -hy, 0], [hx, hy, 0], [-hx, hy, 0]], dtype=np.float32
+            [
+                [-plane_half_x, -plane_half_y, 0],
+                [plane_half_x, -plane_half_y, 0],
+                [plane_half_x, plane_half_y, 0],
+                [-plane_half_x, plane_half_y, 0],
+            ],
+            dtype=np.float32,
         )
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
         uvs = np.array(
             [
-                [-ux + 0.5, -uy + 0.5],
-                [ux + 0.5, -uy + 0.5],
-                [ux + 0.5, uy + 0.5],
-                [-ux + 0.5, uy + 0.5],
+                [-uv_half_x + uv_offset, -uv_half_y + uv_offset],
+                [uv_half_x + uv_offset, -uv_half_y + uv_offset],
+                [uv_half_x + uv_offset, uv_half_y + uv_offset],
+                [-uv_half_x + uv_offset, uv_half_y + uv_offset],
             ],
             dtype=np.float32,
         )
-
         rr.log(
             entity_path,
             rr.Mesh3D(
@@ -388,60 +411,66 @@ class MJCFLogger:
 
         match geom_type:
             case mujoco.mjtGeom.mjGEOM_SPHERE:
-                r = geom.size[0]
+                radius, _, _ = geom.size
                 rr.log(
                     entity_path,
                     rr.Ellipsoids3D(
-                        half_sizes=[r, r, r],
+                        half_sizes=[radius, radius, radius],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
                     static=True,
                     recording=recording,
                 )
+
             case mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+                rx, ry, rz = geom.size
                 rr.log(
                     entity_path,
                     rr.Ellipsoids3D(
-                        half_sizes=geom.size,
+                        half_sizes=[rx, ry, rz],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
                     static=True,
                     recording=recording,
                 )
+
             case mujoco.mjtGeom.mjGEOM_BOX:
+                hx, hy, hz = geom.size
                 rr.log(
                     entity_path,
                     rr.Boxes3D(
-                        half_sizes=geom.size,
+                        half_sizes=[hx, hy, hz],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
                     static=True,
                     recording=recording,
                 )
+
             case mujoco.mjtGeom.mjGEOM_CAPSULE:
-                r, hl = geom.size[0], geom.size[1]
+                radius, half_length, _ = geom.size
                 rr.log(
                     entity_path,
                     rr.Capsules3D(
-                        lengths=2 * hl,
-                        radii=r,
-                        translations=[0, 0, -hl],
+                        lengths=2 * half_length,
+                        radii=radius,
+                        translations=[0, 0, -half_length],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
                     static=True,
                     recording=recording,
                 )
+
             case mujoco.mjtGeom.mjGEOM_CYLINDER:
-                r, hh = geom.size[0], geom.size[1]
+                radius, half_height, _ = geom.size
                 rr.log(
                     entity_path,
                     rr.Cylinders3D(
-                        lengths=2 * hh,
-                        radii=r,
+                        lengths=2 * half_height,
+                        radii=radius,
                         centers=[0, 0, 0],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
@@ -449,9 +478,11 @@ class MJCFLogger:
                     static=True,
                     recording=recording,
                 )
+
             case _:
                 raise NotImplementedError(
-                    f"Unsupported geom type: {mujoco.mjtGeom(geom_type).name}"
+                    f"Unsupported geom type: {geom_type} ({mujoco.mjtGeom(geom_type).name}) "
+                    f"for geom '{geom.name}'"
                 )
 
 
@@ -550,6 +581,7 @@ class MJCFRecorder:
         for body_id in range(self.logger.model.nbody):
             body_name = self.logger.body_names[body_id]
 
+            # Convert wxyz (MuJoCo) to xyzw (Rerun) for all timesteps
             quats_xyzw = np.column_stack(
                 [
                     quaternions[:, body_id, 1],
@@ -599,15 +631,17 @@ def main() -> None:
     args = parser.parse_args()
 
     filepath = pathlib.Path(args.filepath)
+
     if not filepath.is_file() or filepath.suffix != ".xml":
         exit(rr.EXTERNAL_DATA_LOADER_INCOMPATIBLE_EXIT_CODE)
 
-    app_id = args.application_id or str(filepath)
+    app_id = args.application_id if args.application_id else str(filepath)
+
     rr.init(app_id, recording_id=args.recording_id, spawn=True)
 
     model = mujoco.MjModel.from_xml_path(str(filepath))
-    logger = MJCFLogger(model)
-    logger.log_model()
+    mjcf_logger = MJCFLogger(model)
+    mjcf_logger.log_model()
 
     if not args.simulate:
         return
@@ -618,11 +652,12 @@ def main() -> None:
 
     while True:
         step_start = time.time()
+
         mujoco.mj_step(model, data)
 
         if data.time - last_log_time >= log_interval:
             rr.set_time("sim_time", duration=data.time)
-            logger.log_data(data)
+            mjcf_logger.log_data(data)
             last_log_time = data.time
 
         elapsed = time.time() - step_start
