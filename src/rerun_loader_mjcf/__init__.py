@@ -208,7 +208,8 @@ class MJCFLogger:
             if geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
                 continue
             path = self._get_visual_geom_path(body_id, geom)
-            if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+            if geom_type in (mujoco.mjtGeom.mjGEOM_MESH, mujoco.mjtGeom.mjGEOM_BOX):
+                # Meshes and boxes use albedo_factor for color updates
                 rr.log(
                     path,
                     rr.Mesh3D.from_fields(albedo_factor=rgba),
@@ -244,8 +245,8 @@ class MJCFLogger:
             if geom_type == mujoco.mjtGeom.mjGEOM_PLANE:
                 continue
             path = self._get_visual_geom_path(body_id, geom)
-            if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
-                # Meshes use vertex_colors for base color, so reset albedo_factor to neutral
+            if geom_type in (mujoco.mjtGeom.mjGEOM_MESH, mujoco.mjtGeom.mjGEOM_BOX):
+                # Meshes and boxes use vertex_colors for base color, reset albedo_factor to neutral
                 alpha = opacity if opacity is not None else 1.0
                 rr.log(
                     path,
@@ -434,6 +435,154 @@ class MJCFLogger:
                 recording=recording,
             )
 
+    def _log_box_geom(
+        self,
+        entity_path: str,
+        geom: mujoco.MjsGeom,
+        mat_id: int,
+        tex_id: int,
+        rgba: npt.NDArray[np.float32],
+        recording: rr.RecordingStream | None,
+    ) -> None:
+        """Log a box geom as Mesh3D.
+
+        Always uses Mesh3D for consistent albedo_factor support (opacity/color updates).
+
+        For textured boxes, MuJoCo projects 2D textures using planar projection from Z axis:
+        U = 0.5*scl*x - 0.5, V = -0.5*scl*y - 0.5
+        """
+        hx, hy, hz = geom.size
+
+        # Box mesh with 6 faces (24 vertices, 12 triangles)
+        # Face order: +X, -X, +Y, -Y, +Z, -Z
+        vertices = np.array(
+            [
+                # +X face (right)
+                [hx, -hy, -hz],
+                [hx, hy, -hz],
+                [hx, hy, hz],
+                [hx, -hy, hz],
+                # -X face (left)
+                [-hx, hy, -hz],
+                [-hx, -hy, -hz],
+                [-hx, -hy, hz],
+                [-hx, hy, hz],
+                # +Y face (back)
+                [hx, hy, -hz],
+                [-hx, hy, -hz],
+                [-hx, hy, hz],
+                [hx, hy, hz],
+                # -Y face (front)
+                [-hx, -hy, -hz],
+                [hx, -hy, -hz],
+                [hx, -hy, hz],
+                [-hx, -hy, hz],
+                # +Z face (top)
+                [-hx, -hy, hz],
+                [hx, -hy, hz],
+                [hx, hy, hz],
+                [-hx, hy, hz],
+                # -Z face (bottom)
+                [-hx, hy, -hz],
+                [hx, hy, -hz],
+                [hx, -hy, -hz],
+                [-hx, -hy, -hz],
+            ],
+            dtype=np.float32,
+        )
+
+        # Normals for each face
+        normals = np.array(
+            [
+                [1, 0, 0],
+                [1, 0, 0],
+                [1, 0, 0],
+                [1, 0, 0],  # +X
+                [-1, 0, 0],
+                [-1, 0, 0],
+                [-1, 0, 0],
+                [-1, 0, 0],  # -X
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 1, 0],  # +Y
+                [0, -1, 0],
+                [0, -1, 0],
+                [0, -1, 0],
+                [0, -1, 0],  # -Y
+                [0, 0, 1],
+                [0, 0, 1],
+                [0, 0, 1],
+                [0, 0, 1],  # +Z
+                [0, 0, -1],
+                [0, 0, -1],
+                [0, 0, -1],
+                [0, 0, -1],  # -Z
+            ],
+            dtype=np.float32,
+        )
+
+        # Two triangles per face
+        faces = np.array(
+            [
+                [i * 4 + 0, i * 4 + 1, i * 4 + 2, i * 4 + 0, i * 4 + 2, i * 4 + 3]
+                for i in range(6)
+            ],
+            dtype=np.int32,
+        ).reshape(-1, 3)
+
+        if tex_id != _MJCF_NO_ID:
+            # Textured: calculate UVs using MuJoCo's planar projection
+            if mat_id != _MJCF_NO_ID:
+                texrepeat = self.model.mat_texrepeat[mat_id]
+                texuniform = self.model.mat_texuniform[mat_id]
+            else:
+                texrepeat = np.array([1.0, 1.0])
+                texuniform = False
+
+            if texuniform:
+                scl_x = texrepeat[0]
+                scl_y = texrepeat[1]
+            else:
+                scl_x = texrepeat[0] / hx if hx > 0 else texrepeat[0]
+                scl_y = texrepeat[1] / hy if hy > 0 else texrepeat[1]
+
+            uvs = np.zeros((24, 2), dtype=np.float32)
+            for i, v in enumerate(vertices):
+                uvs[i, 0] = 0.5 * scl_x * v[0] - 0.5
+                uvs[i, 1] = -0.5 * scl_y * v[1] - 0.5
+
+            rr.log(
+                entity_path,
+                rr.Mesh3D(
+                    vertex_positions=vertices,
+                    triangle_indices=faces,
+                    vertex_normals=normals,
+                    albedo_texture=self._get_texture(tex_id),
+                    vertex_texcoords=uvs,
+                    albedo_factor=self._get_albedo_factor(),
+                ),
+                static=True,
+                recording=recording,
+            )
+        else:
+            # No texture: use vertex_colors
+            vertex_colors = np.tile(
+                (rgba * _RGBA_MAX).astype(np.uint8), (len(vertices), 1)
+            )
+            rr.log(
+                entity_path,
+                rr.Mesh3D(
+                    vertex_positions=vertices,
+                    triangle_indices=faces,
+                    vertex_normals=normals,
+                    vertex_colors=vertex_colors,
+                    albedo_factor=self._get_albedo_factor(),
+                ),
+                static=True,
+                recording=recording,
+            )
+
     def _log_primitive_geom(
         self,
         entity_path: str,
@@ -469,17 +618,6 @@ class MJCFLogger:
                     entity_path,
                     rr.Ellipsoids3D(
                         half_sizes=[rx, ry, rz],
-                        colors=color,
-                        fill_mode=rr.components.FillMode.Solid,
-                    ),
-                    recording=recording,
-                )
-            case mujoco.mjtGeom.mjGEOM_BOX:
-                hx, hy, hz = geom.size
-                rr.log(
-                    entity_path,
-                    rr.Boxes3D(
-                        half_sizes=[hx, hy, hz],
                         colors=color,
                         fill_mode=rr.components.FillMode.Solid,
                     ),
@@ -571,6 +709,8 @@ class MJCFLogger:
                 self._log_plane_geom(entity_path, geom, mat_id, tex_id, recording)
             case mujoco.mjtGeom.mjGEOM_MESH:
                 self._log_mesh_geom(entity_path, geom, tex_id, rgba, recording)
+            case mujoco.mjtGeom.mjGEOM_BOX:
+                self._log_box_geom(entity_path, geom, mat_id, tex_id, rgba, recording)
             case _:
                 self._log_primitive_geom(entity_path, geom, rgba, recording)
 
