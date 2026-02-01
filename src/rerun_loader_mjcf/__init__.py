@@ -402,11 +402,17 @@ class MJCFLogger:
                 triangle_indices=faces,
                 albedo_texture=self._get_texture(tex_id),
                 vertex_texcoords=uvs,
-                albedo_factor=self._get_albedo_factor(),
             ),
             static=True,
             recording=recording,
         )
+        # Log albedo_factor separately as time-varying (allows set_body_color updates)
+        if self.opacity is not None:
+            rr.log(
+                entity_path,
+                rr.Mesh3D.from_fields(albedo_factor=self._get_albedo_factor()),
+                recording=recording,
+            )
 
     def _log_mesh_geom(
         self,
@@ -429,7 +435,6 @@ class MJCFLogger:
                     vertex_normals=normals,
                     albedo_texture=self._get_texture(tex_id),
                     vertex_texcoords=texcoords,
-                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
                 recording=recording,
@@ -445,9 +450,15 @@ class MJCFLogger:
                     triangle_indices=faces,
                     vertex_normals=normals,
                     vertex_colors=vertex_colors,
-                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
+                recording=recording,
+            )
+        # Log albedo_factor separately as time-varying (allows set_body_color updates)
+        if self.opacity is not None:
+            rr.log(
+                entity_path,
+                rr.Mesh3D.from_fields(albedo_factor=self._get_albedo_factor()),
                 recording=recording,
             )
 
@@ -555,7 +566,6 @@ class MJCFLogger:
                     vertex_normals=normals,
                     albedo_texture=self._get_texture(tex_id),
                     vertex_texcoords=uvs,
-                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
                 recording=recording,
@@ -572,9 +582,15 @@ class MJCFLogger:
                     triangle_indices=faces,
                     vertex_normals=normals,
                     vertex_colors=vertex_colors,
-                    albedo_factor=self._get_albedo_factor(),
                 ),
                 static=True,
+                recording=recording,
+            )
+        # Log albedo_factor separately as time-varying (allows set_body_color updates)
+        if self.opacity is not None:
+            rr.log(
+                entity_path,
+                rr.Mesh3D.from_fields(albedo_factor=self._get_albedo_factor()),
                 recording=recording,
             )
 
