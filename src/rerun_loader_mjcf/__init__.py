@@ -105,7 +105,17 @@ class MJCFLogPaths:
 
 
 class MJCFLogger:
-    """Class to log a MJCF model to Rerun."""
+    """Class to log a MJCF model to Rerun.
+
+    TODO(rerun 0.33+): expose `face_rendering=MeshFaceRendering.Front` on
+    Mesh3D logs (box/mesh/plane) as opt-in for backface culling. Requires
+    verifying CCW winding across MuJoCo models; current `DoubleSided`
+    default is safe.
+
+    TODO(rerun chunk API stable): add `MJCFLogger.stream() -> LazyChunkStream`
+    mirroring `UrdfTree.stream()` (rerun 0.32). API marked experimental,
+    subject to breaking changes — wait for stabilization.
+    """
 
     def __init__(
         self,
@@ -935,7 +945,7 @@ def main() -> None:
     filepath = pathlib.Path(args.filepath)
 
     if not filepath.is_file() or filepath.suffix != ".xml":
-        exit(rr.EXTERNAL_DATA_LOADER_INCOMPATIBLE_EXIT_CODE)
+        exit(rr.EXTERNAL_IMPORTER_INCOMPATIBLE_EXIT_CODE)
 
     app_id = args.application_id if args.application_id else str(filepath)
 
